@@ -153,102 +153,92 @@
       <a class="share-btn" href="https://api.whatsapp.com/send?text=Local%20LLM%20vs%20API%3A%20When%20to%20Run%20Your%20Own%20Model%20https%3A%2F%2Fvishnujan.dev%2Fblog%2Flocal-llm-vs-api%2F" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.5-1.2A9 9 0 1 0 12 3Zm0 1.7a7.3 7.3 0 1 1-3.7 13.6l-.3-.2-2.7.7.7-2.6-.2-.3A7.3 7.3 0 0 1 12 4.7Zm4.2 9.1c-.2-.1-1.3-.7-1.5-.7s-.4-.1-.5.1-.6.7-.7.9-.3.2-.5.1a6 6 0 0 1-1.8-1.1 6.6 6.6 0 0 1-1.2-1.6c-.1-.2 0-.4.1-.5l.4-.4a1.4 1.4 0 0 0 .2-.4.4.4 0 0 0 0-.4c0-.1-.5-1.3-.7-1.7s-.4-.4-.5-.4h-.4a.9.9 0 0 0-.6.3 2.6 2.6 0 0 0-.8 2 4.5 4.5 0 0 0 1 2.4 10.2 10.2 0 0 0 3.9 3.4c1.8.7 1.8.5 2.2.4a2.3 2.3 0 0 0 1.5-1.1 1.9 1.9 0 0 0 .1-1.1c0-.1-.2-.2-.4-.3Z"/></svg></a>
     </div>
     </div>
-    <p class="post-head__dek">A 7B model on a 6GB GPU against a hosted 70B: 6s vs 1.6s, no daily cap, and which one to reach for.</p>
+    <p class="post-head__dek">What fits in 6GB, what it costs in latency, and the schema trick that makes a small model usable.</p>
   </div>
   <figure class="post-hero">
-    <img src="/images/blog/local-llm.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
+    <img src="/images/blog/local-llm.jpg" alt="" width="1000" height="1000" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>Local LLM or hosted API is usually argued on speed or price. Here the deciding number was neither. It was 45.</p>
+  <p>The usual way this gets argued is cost per million tokens against the monthly price of a GPU, with a break-even somewhere north of a million tokens a day. That math is right for a team deciding whether to rent inference hardware. It answers a question I did not have.</p>
 
-  <p>The task is one call to a language model per job advertisement: read the ad, and return the title, seniority, years required, pay range and skills as structured fields rather than prose. The hosted free tier I was using allows 1,000 requests and 100,000 tokens a day. At roughly 2,200 tokens per advertisement, the token budget runs out first, at about 45 advertisements a day. A single run reads 25. Two runs and the day is over.</p>
+  <p>My deciding number was 45. That is how many documents a day I could push through a free hosted tier before it stopped answering, and it is a good illustration of why the headline limits on a pricing page are usually not the limit you hit.</p>
 
-  <p>So the parse moved onto a laptop GPU — a 6GB RTX 4050 — with the hosted providers kept as fallbacks. This is what that actually cost and bought, including one measurement I reported as a success before it had measured the thing I cared about.</p>
+  <h2>Which limit actually binds: requests or tokens</h2>
 
-  <h2>What running a local LLM means, and what limits it</h2>
+  <p>The tier allowed 1,000 requests and 100,000 tokens a day. A thousand requests sounds generous. At roughly 2,200 tokens per document — a job advert, a few pages of text, plus the schema and the instructions — the token budget runs out at about 45 documents, not 1,000. One run processed 25. Two runs and the day was over, which for a job that is supposed to run every few hours is not a limit you can design around.</p>
 
-  <p>A language model is a large file of numbers. To answer quickly, that file has to sit in the memory attached to the graphics card — VRAM — because that is the memory the chip doing the arithmetic can reach at speed. Anything that does not fit spills into ordinary system memory, and the answer arrives at a small fraction of the pace.</p>
+  <p>Whichever limit is smallest is your real limit, and for anything text-heavy it is nearly always tokens rather than requests. It is worth doing that division before you write any code, because it decides the shape of everything after it. A workload that fits comfortably has no reason to leave a hosted API, and one that does not will keep hitting the ceiling no matter how the retries are written.</p>
 
-  <p>So the model you can run is decided almost entirely by one number: how much VRAM the card has. Mine has 6GB. Roughly what that buys, at the usual four-bit compression — <a href="https://huggingface.co/docs/hub/gguf" target="_blank" rel="noopener">quantisation</a>, which stores each weight in four bits instead of sixteen and costs a little accuracy for about a quarter of the size:</p>
+  <p>The other thing that division tells you is what clipping costs. To stay inside a token budget you truncate the input, and I had been truncating to a fixed character count without checking what was in the part I was throwing away. The documents averaged 4,400 characters, reached nearly 12,000, and mentioned pay a median of 77% of the way in. I was systematically discarding the field I most wanted to extract. Measuring where your target information sits in the document is five minutes of work and I would do it before choosing a truncation strategy, or before deciding that truncation is acceptable at all.</p>
 
-  <ul>
-    <li><strong>3–4 billion parameters</strong> — about 2.5GB. Comfortable, fastest.</li>
-    <li><strong>7–8 billion</strong> — about 4.7GB. The largest that makes sense here, and what I run.</li>
-    <li><strong>13–14 billion</strong> — about 9GB. Spills, and slows accordingly.</li>
-    <li><strong>26 billion and up</strong> — about 17GB. Not viable on this card.</li>
-  </ul>
+  <h2>VRAM sizing: what fits in 6GB</h2>
 
-  <p>This is easy to get wrong. The first sizing used the 7.6GB of system memory the Linux environment reported. That figure describes the host's RAM split, and has nothing to do with what the GPU can hold. Raising it would not have allowed a larger model. VRAM caps model size; system RAM only matters for the layers that spill. A partially downloaded 26-billion-parameter model, 17GB of it, was sitting on the disk from before I understood that. It was deleted rather than resumed. If you want to check a model before downloading it, the file sizes on any <a href="https://ollama.com/library/qwen2.5" target="_blank" rel="noopener">Ollama model page</a> are the number to compare against your VRAM, not the parameter count.</p>
+  <p>A model is a large file of numbers, and to answer quickly that file has to sit in the memory attached to the graphics card, because that is the memory the arithmetic can reach at speed. Anything that does not fit spills into system RAM and slows down by an order of magnitude.</p>
 
-  <p>Even at 7 billion the fit is not clean. During a real run the server reports 5.1GB resident and an 18/82 split between CPU and GPU — a fifth of the work lands on the processor because the model plus its context window does not quite fit. That is the honest cost of 6GB, and it shows up in every latency figure below.</p>
+  <p>So what you can run is decided almost entirely by VRAM. On a 6GB card, at the four-bit <a href="https://huggingface.co/docs/hub/en/gguf" target="_blank" rel="noopener">quantisation</a> that has become the default — four bits per weight instead of sixteen, costing some accuracy for about a quarter of the size — a 3 to 4 billion parameter model takes about 2.5GB and is comfortable, a 7 to 8 billion model takes about 4.7GB and is the largest that makes sense, a 14 billion model wants about 9GB and spills, and anything from 26 billion up is not happening.</p>
 
-  <h2>The comparison, on the same task</h2>
+  <p>I got this wrong twice in ways that are worth repeating because both are easy. The first was sizing against system RAM: the environment reported 7.6GB free and I reasoned from that, when the number that matters is what the GPU holds. The second was sizing against the parameter count rather than the file, and downloading 17GB of a model that was never going to load. Compare your VRAM against the actual download size on the model's page, which is the number that has to fit.</p>
 
-  <p>Both sides ran the same schema against the same job advertisements:</p>
+  <p>Even a nominal fit is not clean. Running a 7B model, the server reported 5.1GB resident and an 18/82 split between CPU and GPU, meaning a fifth of the work was landing on the processor because the model plus its context window did not quite fit. Budget for the context, not just the weights — <code>num_ctx</code> is the setting that quietly decides whether you are still on the GPU.</p>
 
-  <ul>
-    <li><strong>Hosted, 70-billion-parameter model:</strong> 1.6 seconds per advertisement.</li>
-    <li><strong>Local, 7-billion-parameter model:</strong> about 6 seconds, plus 18 seconds the first time while the model loads into VRAM.</li>
-  </ul>
+  <h2>Latency: local 7B against hosted 70B</h2>
 
-  <p>Roughly four times slower. For a 25-job run that is two and a half minutes against forty seconds, on a pipeline that runs a few times a day and that nobody is waiting on. That is the trade in one line: four times the latency, in exchange for the cap disappearing entirely.</p>
+  <p>Same schema, same documents, both sides. A hosted 70-billion-parameter model took 1.6 seconds per document. A local 7-billion model took about 6 seconds, plus 18 seconds the first time while the weights load into VRAM, which <code>keep_alive</code> avoids paying repeatedly.</p>
 
-  <p>The cap is not the only thing that goes. With no token budget, advertisements no longer have to be clipped to fit — and mine average 4,400 characters, reach nearly 12,000, and mention pay a median of 77% of the way in. Clipping to survive a hosted budget was measurably discarding the part of the text I most wanted. Nothing leaves the machine either, which matters more for a personal document than for a job ad.</p>
+  <p>Roughly four times slower. For a 25-document run that is two and a half minutes against forty seconds, on a job nobody is waiting for. In exchange the cap disappears entirely and the text stops leaving the machine, which matters more for a personal document than for a public job advert but was worth something to me.</p>
 
-  <p>What I will not claim is a cost saving. The GPU is a laptop I already own, the electricity is not metered separately, and the hosted tier I was hitting is free. If you are choosing between a rented GPU and an API, that is a real calculation and this is not it — the case here is caps and privacy, not money.</p>
+  <p>What I will not claim is a cost saving. The GPU is in a laptop I already owned, the electricity is not separately metered, and the hosted tier I was exhausting is free. Against a rented GPU the sums in the cost-comparison articles apply and mine do not. The case here is caps and privacy.</p>
 
-  <h2>Getting a small model to return valid structure</h2>
+  <h2>Constrained decoding for small models</h2>
 
-  <p>A 7-billion model is not a 70-billion model, and the difference shows up first as malformed answers rather than as wrong ones. Mine kept failing validation in one specific way: asked for the employment type, it answered <code>hybrid</code>, which is an answer about <em>location</em>:</p>
+  <p>A 7B model is not a 70B model, and the gap shows up first as malformed output rather than wrong answers. Asked for employment type, mine kept answering <code>hybrid</code>, which is an answer about location.</p>
 
   <pre><code>1 validation error for JDParsed
 job_type
   Input should be 'fulltime', 'contract', 'internship' or 'parttime'
   [type=literal_error, input_value='hybrid']</code></pre>
 
-  <p>The usual handling is to notice after the fact and ask again. Each re-ask is a whole new inference, so one call took 83 seconds across four attempts.</p>
+  <p>The default handling is to catch that and ask again, which is what <a href="https://python.useinstructor.com/" target="_blank" rel="noopener">Instructor</a> and most structured-output wrappers do. Each re-ask is a fresh inference, so one document took 83 seconds across four attempts.</p>
 
-  <p>Two fixes, and the difference between them is the useful part.</p>
+  <p>Two things fix it and the difference between them is the part worth keeping. The first is describing the fields better: "employment type if stated" and "work arrangement if stated" are genuinely easy to conflate, and rewriting each description to exclude the other took it from four re-asks to about one. Cheap, portable, and still only persuasion.</p>
 
-  <p><strong>Describing the fields better.</strong> The two fields were described as "Employment type if stated" and "Work arrangement if stated", which are genuinely easy to conflate. Rewriting each description to explicitly exclude the other took it from four re-asks to zero or one. Cheap, and it helps every model. It is still persuasion.</p>
+  <p>The second is making the wrong answer impossible to produce. A model emits one token at a time, choosing from everything it could say next, and constrained decoding narrows that choice to what a schema permits: after <code>"job_type": "</code> the only continuations available are the four allowed values. <code>hybrid</code> never becomes reachable in the first place. <a href="https://ollama.com/blog/structured-outputs" target="_blank" rel="noopener">Ollama compiles a JSON schema into that constraint</a>; underneath it is <a href="https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md" target="_blank" rel="noopener">llama.cpp's GBNF grammars</a>, and the same idea appears as <a href="https://platform.openai.com/docs/guides/structured-outputs" target="_blank" rel="noopener">structured outputs</a> on the hosted side, so it transfers whichever way you go. If you want to understand the mechanism properly, <a href="https://github.com/dottxt-ai/outlines" target="_blank" rel="noopener">Outlines</a> is the clearest implementation to read: it compiles the schema to a finite state machine and masks the logits that would leave it.</p>
 
-  <p><strong>Making the wrong answer unproducible.</strong> A model generates one token at a time, choosing from everything it could say next. Constrained decoding narrows that choice to what the schema permits — after <code>"job_type": "</code>, the only continuations available are the four allowed values. <code>hybrid</code> is not rejected after the fact; it is never available. Ollama <a href="https://ollama.com/blog/structured-outputs" target="_blank" rel="noopener">compiles a JSON schema into that constraint</a> directly; the same idea underlies <a href="https://github.com/ggml-org/llama.cpp/blob/master/grammars/README.md" target="_blank" rel="noopener">llama.cpp's grammars</a> and <a href="https://platform.openai.com/docs/guides/structured-outputs" target="_blank" rel="noopener">OpenAI's structured outputs</a>, so the technique transfers whichever side you end up on.</p>
+  <p>With the schema enforced, five documents out of five validated with no re-asks and the average call came down to about six seconds. This is where I declared victory, and I was wrong.</p>
 
-  <p>With the schema enforced, five responses out of five validated with no re-asks, and the average call came down to about six seconds. I wrote that up as faster and correct, because the re-asks were the latency.</p>
+  <h2>Empty fields that pass validation</h2>
 
-  <h2>Where that conclusion was too strong</h2>
+  <p>Three of the fields — required skills, nice-to-haves, responsibilities — were optional lists, and an absent key is valid. A response naming not one skill from the document scored exactly as well as a complete one.</p>
 
-  <p>"Five out of five valid" measures conformance to a schema. It does not measure whether the answers contain anything.</p>
+  <p>Measured across real documents rather than one test case, the local model returned no required skills at all on 71% of them, while the hosted model populated them. Everything downstream depended on those skills, so the pipeline was passing validation and comparing against nothing.</p>
 
-  <p>Three of the fields — the required skills, the nice-to-haves, the responsibilities — were optional lists. An absent key is valid. So a response that named not one skill from the advertisement scored exactly as well as a complete one, and the check could not tell them apart. Measured across real advertisements rather than the one test case: the local model returned <strong>no required skills at all on 71%</strong> of them, while the hosted model populated them. The scoring downstream depends on those skills, so the parses were passing validation and feeding an empty comparison.</p>
+  <p>Finding out why took an ablation: twelve documents, two runs each, one change at a time. There were three separate permissions to skip the work. The schema allowed it, because the three list fields had defaults and so were not in the <a href="https://json-schema.org/understanding-json-schema" target="_blank" rel="noopener">required</a> set, which meant the grammar let the model omit the keys entirely — they were absent rather than empty, and the empty lists I saw downstream were manufactured by the model definition afterwards. The system prompt licensed it, with an instruction to return null or an empty list when a field was not stated. And the user prompt never asked for them, because every scalar field had an explicit instruction and those three had none.</p>
 
-  <p>Separating the causes took an ablation — twelve advertisements, two runs each, changing one thing at a time:</p>
+  <p>Fixing only the prompt moved the empty rate from 71% to 62% while sharply improving whatever did come back. Fixing both took it to zero out of twelve. The schema controls whether a field can be absent; the prompt controls whether what comes back is any good. I had been treating those as the same lever.</p>
 
-  <ul>
-    <li><strong>The schema permitted it.</strong> The three list fields had defaults, so they were not in the schema's <a href="https://json-schema.org/understanding-json-schema" target="_blank" rel="noopener"><code>required</code></a> set, and the grammar allowed the model to skip the keys entirely. The keys were absent, not empty — the empty lists visible downstream were manufactured by the model definition after the fact.</li>
-    <li><strong>The system prompt licensed it</strong> — "when a field is not stated, return null or an empty list".</li>
-    <li><strong>The user prompt never asked for them.</strong> Every scalar field had an explicit instruction. These three had none.</li>
-  </ul>
+  <p>So the check to write is not whether the response parses. It is whether the fields that matter are present and non-empty across a sample you have looked at by hand, tracked per field, on every model change. Where a field must not be empty, say so in the schema with <code>minItems</code> rather than hoping.</p>
 
-  <p>Fixing only the prompt moved the empty rate from 71% to 62% while sharply improving the quality of whatever did come back. That split is the finding worth carrying: <strong>the schema controls whether a field appears at all; the prompt controls how good it is.</strong> Both were needed. Routing the local model through the same schema-stating path the hosted providers use, plus a prompt that names the three fields and asks for exhaustive extraction, took it to 0 empty out of 12.</p>
+  <h2>Stale measurements of third-party software</h2>
 
-  <p>There is one more thing in this sequence I would flag to anyone building the same pipeline. An early measurement concluded that the local server's OpenAI-compatible endpoint ignored schema enforcement, so I wrote a separate transport that spoke to its native endpoint instead. Re-measured later against a current version with a direct probe, that endpoint <em>does</em> honour it, respecting both required fields and minimum list lengths. The original measurement was either confounded or accurate for a version that has since moved. The measurement itself is not the interesting part — measurements go stale. What made it consequential is the chain it started: the conclusion was written into a code comment, the comment justified keeping a second transport, and that second transport is where the missing-fields behaviour lived. The bespoke transport has been deleted. Measurements about someone else's software have a shelf life, and a comment asserting one should carry the date and the version it was taken against.</p>
+  <p>An early measurement of mine concluded that the local server's OpenAI-compatible endpoint ignored schema enforcement, so I wrote a separate transport that spoke to its native endpoint. Re-probed later against a current version, that endpoint honours it, including required fields and minimum list lengths. The original result was either confounded or true of a version that has since moved.</p>
 
-  <h2>How I would choose</h2>
+  <p>The measurement going stale is not the interesting part. What made it expensive is the chain: the conclusion went into a code comment, the comment justified keeping a second transport, and the second transport is where the missing-fields behaviour lived. A comment asserting something about a third party's behaviour needs the date and the version it was taken against, so the next person knows whether to trust it or re-probe. I deleted the transport.</p>
 
-  <p><strong>Hosted API</strong> when the task is hard, latency is user-facing, or volume is spiky and unpredictable. A 70-billion model on someone else's hardware is better at reasoning than anything that fits in 6GB, and no amount of prompt work closes that.</p>
+  <h2>Choosing between local and hosted</h2>
 
-  <p><strong>Local</strong> when the task is narrow and repetitive: extract these fields from this document. Also when the volume is steady and would collide with a daily cap, when nobody is waiting on the response, or when the text should not leave the machine.</p>
+  <p>A hosted API when the task is hard, when latency is user-facing, or when volume is spiky. A 70B model on someone else's hardware reasons better than anything that fits in 6GB and no amount of prompt work closes that gap.</p>
 
-  <p><strong>Both, ordered by cost.</strong> What I actually run is a chain: local first because it is uncapped, then the free hosted tier, then a metered account that is only reached when everything free has failed. Ordering by cost only works if the failure that moves you down the chain is classified correctly, which means the classification described in <a href="/blog/http-429-retry-logic/">what a 429 really means</a> has to be right, since it decides when to give up on one link and move to the next.</p>
+  <p>Local when the task is narrow and repetitive — extract these fields from this document — when volume is steady enough to collide with a daily cap, when nobody is waiting, or when the text should not leave the machine.</p>
 
-  <p><strong>If you take one thing:</strong> constrain the output with a schema, then measure whether the fields have content, not whether they parse. Those are different tests and only the second one is about the model.</p>
+  <p>In practice I run both, ordered by cost: local first because it is uncapped, then the free hosted tier, then a metered account reached only when everything free has failed. That ordering only works if the failure that moves you down the chain is classified correctly, which turns out to be <a href="/blog/http-429-retry-logic/">classifying a provider’s refusals correctly</a>.</p>
+
+  <p>And if the volume ever outgrows a laptop, the answer is not a bigger laptop. <a href="https://docs.vllm.ai/" target="_blank" rel="noopener">vLLM</a> with continuous batching is what makes a rented GPU worth paying for, and that is the point where the cost-per-million-tokens comparison I dismissed at the top becomes the right one to run.</p>
 
   <h2>References and further reading</h2>
 
   <p>Ollama's <a href="https://ollama.com/blog/structured-outputs" target="_blank" rel="noopener">structured outputs</a> post is the short version of how a JSON schema becomes a decoding constraint, with runnable examples in both its own API and the OpenAI-compatible one.</p>
 
-  <p><a href="https://python.useinstructor.com/" target="_blank" rel="noopener">Instructor</a> is the library doing the validation and re-asking above. Worth knowing that its schema mode also states the schema in the prompt, which is a meaningfully different thing from constraining the grammar, and is why it recovered fields the grammar alone allowed to be skipped.</p>
+  <p><a href="https://python.useinstructor.com/" target="_blank" rel="noopener">Instructor</a> is the library doing the validate-and-re-ask loop described above. Worth knowing that its schema mode also states the schema in the prompt, which is a meaningfully different thing from constraining the grammar, and is why it recovered fields the grammar alone allowed to be skipped.</p>
 
   <h3>Running the model</h3>
 
@@ -290,35 +280,35 @@ job_type
     <div class="post-grid post-grid--sm">
       <a class="post-card post-card--sm" href="/blog/how-to-test-a-data-pipeline/">
         <div class="post-card__media">
-          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Test a Data Pipeline: What Tests Miss</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">92 tests passed while three features were broken. What to test instead, and the control run that comes first.</p>
+          <p class="post-card__excerpt">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
         <div class="post-card__media">
-          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
           <h3 class="post-card__title">Data Ingestion Bugs and How to Catch Them</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.</p>
+          <p class="post-card__excerpt">Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
         <div class="post-card__media">
-          <img src="/images/blog/scraping.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pagination.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Scrape a Site That Paginates by Date</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.</p>
+          <p class="post-card__excerpt">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
         </div>
       </a>
     </div>

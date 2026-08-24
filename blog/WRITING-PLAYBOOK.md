@@ -418,3 +418,162 @@ reach outside the page.
 files, private notes. Elide them (`CHANGELOG.md  PRD.md  job_automation_architecture.md`) or
 leave the list generic. Same for `http://localhost:...` URLs in pasted output: cut the host
 (`'.../resume/....pdf'`), since the point is never the address.
+
+---
+
+---
+
+## 9. Read the shipped posts before writing a new one
+
+Set 2026-08-24. **Before drafting anything, read two or three of the posts in
+`partials/posts/`.** They are the pattern, and they are more specific than any rule below.
+`how-to-test-a-data-pipeline`, `why-scrapers-get-blocked` and `http-429-retry-logic` are the
+three to read — they were rewritten last and are closest to right.
+
+This section replaces the old section 8 ("never reference your own work cold"), which was too
+weak. It said don't mention a project *cold*. The actual rule is stronger.
+
+## 10. The post is about the problem, not the project
+
+Every post used to be *built around* a project, with a setup clause bolted on the front. A
+reader arriving from a search for "why does my scraper get blocked" was handed a tour of
+somebody else's codebase with the answer distributed through it. Two rewrites failed because
+the framing was kept and only the wording changed.
+
+**Delete every sentence that names a project, a repo, a product, a script count, or a file.
+If what remains is still a complete answer to the title, the framing is right. If it collapses
+into fragments, the post is a project write-up with SEO on top — start over.**
+
+What survives the cut is the incident, told as something that happened to you. "A site I had
+been collecting from started answering with 405" needs no project. "The bot had 92 unit tests"
+does. The difference is whether the reader has to know anything to follow the sentence.
+
+**Drop material that does not fit.** Rewriting is not translating — if a section only made
+sense as project narration, cut it rather than rephrasing it. The last rewrite dropped a
+section per post on average and every post got better.
+
+**Where a detail is genuinely needed for a worked example**, one clause of generic setup does
+it: "a collector that pulls news headlines for a set of crypto assets". Never a paragraph, and
+never a name. The project belongs in one line of provenance before References, and in the
+"My own projects" list, and nowhere else.
+
+## 11. Show the research, not just the incident
+
+The reader should finish believing you went and found out. Hitting a problem, reading around
+it, and coming back with the name of the thing and the tool that solves it is the most valuable
+shape a post has — more than the war story on its own.
+
+So when a concept was learned after the fact, put it in as a concept: *metamorphic testing is
+the name for asserting a relationship between two runs when you cannot state the correct
+output for either*; *partition overwrite is the cleanest idempotency pattern available*;
+*a slowly changing dimension is what to use when the source revises history*. Link the primary
+source at that point.
+
+**Do not annotate what you did or did not use in production.** No "I don't use this yet", no
+"this isn't in my project". State the technique and what it is for. If it needs a hedge, hedge
+the claim ("I have not hit that in practice, but it is the next thing I would look at"), not
+your credentials.
+
+Every post should carry at least one thing the reader can act on within the hour: run your
+suite in a fresh clone, fetch `tls.browserleaks.com/json` from both your script and your
+browser and compare, one unchanged rerun to measure the noise floor, `validate="one_to_one"`.
+
+## 12. SEO: cover the canonical subtopics, then beat them
+
+Search the target phrase before drafting and skim the top five results. Two things come out
+of it, and both matter.
+
+**What they all cover is the shape the searcher expects**, and the post has to cover it or it
+reads as incomplete. For "how to test a data pipeline" that was unit, contract, data quality
+and end-to-end tests. Cover them properly and briefly, with the standard tool names, because
+those names are also the search surface.
+
+**What none of them covers is the post.** That is where the real material goes and it is
+usually most of the length. On the same query, nothing in the top results touched
+non-deterministic sources, measuring variance, kill-and-resume, or third-party drift.
+
+Other rules that hold:
+
+- Title is the search phrase; the first paragraph answers it. Someone reading only the title
+  and the opening should already have the short answer.
+- The dek promises value, not autobiography. "A green suite is evidence about your code, not
+  your data" beats "92 tests passed while three features were broken".
+- Slugs and canonicals never change once published. Retitle freely in `posts.json`.
+- **Mention the other guides at most once per post.** "Most write-ups cover X" is a useful
+  framing device exactly one time. Used in three paragraphs it becomes a tic, and it reads as
+  picking fights rather than explaining.
+
+## 13. What reading Dan's posts actually changed
+
+Re-read `danluu.com/postmortem-lessons` in August 2026 after two drafts came back as
+AI-sounding. Four things were wrong that the earlier notes had not caught:
+
+**No bullet lists.** Not "few" — the post has none. Organisation comes from plain `<h2>`
+headings with prose underneath. Every list I had written turned out to be either three
+sentences wearing a costume, or a real enumeration that read better as a sentence with commas.
+The current nine posts contain zero `<ul>` in the body. Lists are fine in the References
+section, which is a reference list.
+
+**Paragraphs end on a fact or a hedge, never on a rule.** My drafts ended each section with a
+bolded takeaway — "**The guard:** …", "**The tell:** …". One per section is a template, and a
+template is the thing that reads as generated. State the rule inside the paragraph where it
+arises, in ordinary type, then keep going. Bold is for a term being defined, a few times a post.
+
+**Setup bridges from the general to the specific**, not the reverse. "This AWS failure tells a
+typical story" comes *before* the anecdote. Opening a section on the incident and generalising
+afterwards leaves the reader holding a fragment while they wait to find out why it matters.
+
+**Hedges attach to the strength of a claim, never to its content.** "I'd guess that is the
+general distribution, though I have not counted carefully enough to defend a number." The claim
+stays specific; the confidence is what moves. Vague writing hedges the claim instead.
+
+Also still true and easy to lose: numbers are evidence anchors, so every claim that can carry
+one should; sentence length has to vary, because uniform length is the clearest tell in
+generated prose; and the last sentence of a paragraph should never sound like a pull quote.
+
+### The AI tells found in my own drafts
+
+Checked by grep before publishing now:
+
+| Construction | Example caught | Fix |
+|---|---|---|
+| Balanced antithesis | "this is normal rather than unlucky" | Say the fact: "the tests pass the whole time" |
+| "X is not Y, it is Z" | "is not compression, it is an assertion" | "asserts that …" |
+| Bolded rule per section | "**The guard:** assert your key columns exist" | Fold into the prose |
+| Every paragraph the same length | — | Break one into three words |
+
+```
+grep -nE "is not [a-z ]+, (it is|it's)|rather than (unlucky|luck)|not about [a-z]+ but about" partials/posts/*.html
+```
+
+## 14. Headings are noun phrases, not sentences
+
+Set 2026-08-24. A draft went out with headings like "The four kinds of test everyone lists,
+and what each one misses" and "Testing against a source that won't repeat itself". Those are
+statements. They read as amateur, they do not scan, and they waste the strongest on-page SEO
+signal after the title.
+
+A heading names the thing the section is about. The reliable form is a **noun phrase**,
+optionally `Topic: qualifier`:
+
+| Instead of | Write |
+|---|---|
+| The four kinds of test everyone lists, and what each one misses | Standard test types: unit, contract, data quality, end-to-end |
+| Testing against a source that won't repeat itself | Non-deterministic sources: measuring the noise floor |
+| Going too fast, and writing the wreckage | Adaptive backoff as a data-quality control |
+| Where the choice makes no difference at all | Blocking: where neither tool helps |
+| How soft the number is | Caveats on the count |
+
+Rules that fall out of it:
+
+- **Lead with the keyword.** "VRAM sizing: what fits in 6GB", not "What fits in the GPU you have".
+  The first two or three words are what a reader scanning the page and a search engine both read.
+- **No questions**, unless the whole post is structured around them. "Check 3: survival after
+  costs" beats "Check 3: does it survive costs?".
+- **No first person, no verbs in the imperative.** "A diagnostic order", not "The order I work
+  through it now".
+- **Keep a set consistent.** If one heading in the post is `Layer 2: TLS fingerprinting`, every
+  sibling is `Layer N: <noun phrase>`. Mixed forms inside one post are what make it look
+  unedited.
+- A count or a label in the heading is good when it carries information —
+  `Silently wrong data — 8 bugs` tells the reader the size of the section before they enter it.

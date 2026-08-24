@@ -181,7 +181,7 @@ function keepReading(current) {
   const others = ordered.filter((p) => p.slug !== current.slug).slice(0, 3);
   const cards = others.map((p) => `      <a class="post-card post-card--sm" href="/blog/${p.slug}/">
         <div class="post-card__media">
-          <img src="${p.image}" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="${p.image}" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           ${tagRow({ tags: p.tags.filter((t) => t !== "Featured") })}
@@ -238,7 +238,7 @@ ${shareRow(p)}
     <p class="post-head__dek">${esc(p.dek)}</p>
   </div>
   <figure class="post-hero">
-    <img src="${p.image}" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
+    <img src="${p.image}" alt="" width="1000" height="1000" fetchpriority="high" decoding="async">
   </figure>
 
 ${body}
@@ -261,7 +261,7 @@ function indexList() {
   const rest = ordered.filter((p) => p !== feature);
   const cards = rest.map((p) => `    <a class="post-card" href="/blog/${p.slug}/">
       <div class="post-card__media">
-        <img src="${p.image}" alt="" width="1000" height="563" loading="lazy" decoding="async">
+        <img src="${p.image}" alt="" width="1000" height="1000" loading="lazy" decoding="async">
       </div>
       <div class="post-card__body">
         ${tagRow(p)}
@@ -278,7 +278,7 @@ function indexList() {
 
   return `  <a class="feature-card" href="/blog/${feature.slug}/">
     <div class="feature-card__media">
-      <img src="${feature.image}" alt="" width="1000" height="563" loading="lazy" decoding="async">
+      <img src="${feature.image}" alt="" width="1000" height="1000" loading="lazy" decoding="async">
     </div>
     <div class="feature-card__body">
       ${tagRow(feature)}

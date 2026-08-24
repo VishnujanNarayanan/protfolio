@@ -153,102 +153,90 @@
       <a class="share-btn" href="https://api.whatsapp.com/send?text=Playwright%20vs%20Selenium%3A%20Which%20to%20Use%20and%20When%20https%3A%2F%2Fvishnujan.dev%2Fblog%2Fplaywright-vs-selenium%2F" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.5-1.2A9 9 0 1 0 12 3Zm0 1.7a7.3 7.3 0 1 1-3.7 13.6l-.3-.2-2.7.7.7-2.6-.2-.3A7.3 7.3 0 0 1 12 4.7Zm4.2 9.1c-.2-.1-1.3-.7-1.5-.7s-.4-.1-.5.1-.6.7-.7.9-.3.2-.5.1a6 6 0 0 1-1.8-1.1 6.6 6.6 0 0 1-1.2-1.6c-.1-.2 0-.4.1-.5l.4-.4a1.4 1.4 0 0 0 .2-.4.4.4 0 0 0 0-.4c0-.1-.5-1.3-.7-1.7s-.4-.4-.5-.4h-.4a.9.9 0 0 0-.6.3 2.6 2.6 0 0 0-.8 2 4.5 4.5 0 0 0 1 2.4 10.2 10.2 0 0 0 3.9 3.4c1.8.7 1.8.5 2.2.4a2.3 2.3 0 0 0 1.5-1.1 1.9 1.9 0 0 0 .1-1.1c0-.1-.2-.2-.4-.3Z"/></svg></a>
     </div>
     </div>
-    <p class="post-head__dek">Twelve scrapers moved from Selenium to Playwright. Where it helped, and where it changed nothing.</p>
+    <p class="post-head__dek">Locators, saved sessions and pinned browsers — plus the 52 fixed sleeps that show what auto-waiting does not fix.</p>
   </div>
   <figure class="post-hero">
-    <img src="/images/blog/playwright-selenium.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
+    <img src="/images/blog/playwright-selenium.jpg" alt="" width="1000" height="1000" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>Playwright vs Selenium is usually argued in the abstract. This compares them on the same work: 32 collection scripts, fourteen of which drive a real web browser because the data only appears after a page has run its JavaScript. Twelve use Playwright and two use Selenium, and the two Selenium ones are the oldest files in the folder.</p>
+  <p>Almost everything written comparing these two is about test suites. The comparison tables cover browser coverage, language bindings, parallel execution and CI integration, which are the right things to compare if you are choosing a tool to test your own web app in. I have never used either for that. I use them to get data out of pages that do not exist until JavaScript has run, and the things that decide the choice for scraping barely appear in those tables.</p>
 
-  <p>That ratio is the honest summary of the position, but it is not an argument, and the reasons people usually give for it are mostly wrong. This is what actually changed when the same jobs moved across, including the part where the tidy story about Playwright does not survive contact with my own code.</p>
+  <p>The architecture difference is real and is usually stated first: Selenium talks to a browser over HTTP through the <a href="https://www.w3.org/TR/webdriver2/" target="_blank" rel="noopener">WebDriver protocol</a>, Playwright holds a persistent WebSocket to it. That does make Playwright faster per operation, and for a scrape it makes almost no difference, because the time goes on waiting for pages and on being polite to the server, not on the round trip to the browser. The differences that mattered to me were waiting, session reuse, browser versioning, and — fourth — whether a browser is needed at all.</p>
 
-  <h2>What Playwright and Selenium actually do</h2>
+  <h2>Waiting: locators against explicit waits</h2>
 
-  <p>A lot of a modern web page does not exist in the file the server sends you. The server sends a mostly empty shell plus JavaScript, and the numbers you can see in the browser get filled in a moment later. If you fetch that page the plain way — the equivalent of <code>curl</code> — you get the shell. So instead you start an actual browser, invisibly, and tell it what to do: open this page, click that button, now give me the text. <a href="https://www.selenium.dev/" target="_blank" rel="noopener">Selenium</a> and <a href="https://playwright.dev/" target="_blank" rel="noopener">Playwright</a> are both ways to give a browser those instructions from code. Selenium arrived in 2004 and is the reason the whole category exists; Playwright is Microsoft's, from 2020.</p>
-
-  <p>Both work. Anything one can scrape, the other can scrape. The differences are in how much code you write around the parts where a page is slower than your script.</p>
-
-  <h2>The difference that shows up on line one: waiting</h2>
-
-  <p>The core problem in browser automation is that your code runs instantly and a page does not. You ask for a button that has not been drawn yet, and you get an error rather than a button.</p>
-
-  <p>Selenium's answer is that you say so explicitly. You wrap the thing you want in a wait that polls until a condition holds:</p>
+  <p>Your code runs instantly and a page does not. Ask for a button that has not been drawn and you get an error rather than a button. Selenium's answer is that you say so explicitly, wrapping what you want in a wait that polls until a condition holds.</p>
 
   <pre><code>self.wait = WebDriverWait(self.driver, 15)
 news_tab = WebDriverWait(self.driver, 10).until(
     EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'News')]")))</code></pre>
 
-  <p>That is from an Economic Times news scraper, which is one of the two Selenium files. It is 563 lines, and 12 of them are <code>except</code> clauses. One catches <code>StaleElementReferenceException</code>, which is worth explaining because it is the single most Selenium-shaped thing in the codebase: when you find an element, Selenium hands you a reference to that specific object in the page. If the page redraws that part of itself — which single-page sites do constantly, for reasons that have nothing to do with you — your reference now points at something that no longer exists, and using it raises. The element is still there on screen. Your handle to it is not.</p>
+  <p>The scraper that line came from is 563 lines and twelve of them are <code>except</code> clauses. One catches <code>StaleElementReferenceException</code>, which is worth understanding even if you never touch Selenium. When you find an element, Selenium hands you a reference to that object in the page. If the page redraws that part of itself, and single-page sites do this constantly for reasons unrelated to you, the reference points at something that no longer exists and using it raises. The element is still on screen. Your handle to it is not.</p>
 
-  <p>Playwright does not hand you the element. It hands you a <em>locator</em>, which is a stored description of how to find the element. It is resolved fresh every time you use it, and it waits on its own:</p>
+  <p>Playwright hands you a locator instead: a stored description of how to find the element, re-resolved every time you use it, waiting on its own for the element to exist, be visible and be ready.</p>
 
   <pre><code>await page.locator("input[name='password']").fill(PASSWORD)
 await page.get_by_role("button", name="Log in").click()
 await page.wait_for_url("**/home", timeout=15000)</code></pre>
 
-  <p>Each of those three lines waits on its own for the element to exist, be visible, and be ready to be interacted with. There is no wait object, and a redraw between two lines is not an error, because the description is re-run rather than a handle being reused. That is the real difference, and it is a difference in what you have to think about rather than in what is possible.</p>
+  <p>A redraw between two lines is not an error, because the description is re-run rather than a handle reused. Selenium 4 has relative locators and a much better API than the one most tutorials show, but it does not have this property, and this property is most of what people mean when they say Playwright is less flaky.</p>
 
-  <h2>Where that story breaks: my Playwright scripts are full of fixed sleeps</h2>
+  <p>What the marketing claims is that auto-waiting means you stop writing <code>sleep(5)</code>. I counted across twelve Playwright scrapers I had written: 52 calls to <code>wait_for_timeout</code>, which is a fixed sleep under another name, against 25 uses of the proper wait-for-condition call. Two out of three waits were still blind.</p>
 
-  <p>The usual claim is that auto-waiting means you stop writing <code>sleep(5)</code>. I counted mine. Across the 12 Playwright scripts there are 52 calls to <code>wait_for_timeout</code>, which is a fixed sleep wearing a different name, against 25 uses of the proper "wait until this appears" call.</p>
+  <p>Some of those are deliberate pacing between requests and have nothing to do with the tool. The rest are the interesting case: auto-waiting answers "is this element ready", which requires an element whose readiness proves the page is done. Click a filter that triggers a background fetch which swaps numbers inside cells already on screen, and there is no new element to wait for. The correct answer is to wait on the network response rather than the DOM, which Playwright can do and which I did not reach for often enough.</p>
 
-  <p>Those 52 are not all the same thing, and separating them is the useful part:</p>
+  <pre><code>async with page.expect_response(lambda r: "/api/quotes" in r.url and r.ok):
+    await page.click("#apply-filter")</code></pre>
 
-  <p><strong>Pacing.</strong> A good share of them are deliberate — a pause between requests so a script reads more like a person and less like a flood. That has nothing to do with which tool is in use, and removing it would be a mistake.</p>
+  <p>Auto-waiting removes the class of failure where the element was not there yet. It does not tell you when a page has finished, and no tool can, because only you know what "finished" means for the data you came for.</p>
 
-  <p><strong>No signal to wait on.</strong> Auto-waiting answers "is this element ready", which requires you to know which element proves the page is done. Say clicking a filter triggers a background fetch, and that fetch swaps the numbers inside table cells that were already on screen. There is no new element to wait for. The honest options are to <a href="https://playwright.dev/python/docs/network" target="_blank" rel="noopener">wait for the network response by URL</a> or to sleep. I reached for the sleep in more places than I would defend.</p>
+  <h2>Session reuse: storage state against user profiles</h2>
 
-  <p>So the accurate version of the claim is narrower than the popular one: auto-waiting removes the class of failure where the element was not there <em>yet</em>. It does not remove the need to know when a page has finished, and it does not write that knowledge for you.</p>
+  <p>This changed how I structure scrapers more than the waiting did, and it gets far less attention than the waiting does.</p>
 
-  <h2>Logging in once instead of every run</h2>
-
-  <p>This is the feature that actually changed how I structure scripts, and it gets less attention than the waiting.</p>
-
-  <p>Several sources only show data to a signed-in account. Signing in from code is the fragile part of any scraper: it is the most heavily defended page on the site, and it is where a wrong move costs you the account rather than the run. Playwright lets you do it once, by hand, in a visible browser, and then save what the browser learned — cookies and stored site data — to a JSON file:</p>
+  <p>Signing in from code is the most fragile part of any scraper. The login page is the most heavily defended page on the site, and a wrong move costs the account rather than the run. Playwright lets you sign in once by hand in a visible browser and save what the browser learned — cookies and origin storage — to a JSON file, then start every later run from that file.</p>
 
   <pre><code>browser = await p.chromium.launch(headless=False)   # visible: log in as a human
 context = await browser.new_context()
 # ... fill the login form once, then:
 await context.storage_state(path="storageState.json")</code></pre>
 
-  <p>Every later run starts from that file and is already signed in, with no credentials in the scraping code at all. The equivalent in Selenium is to point Chrome at a saved user profile directory. That works, but it is heavier: a whole browser profile on disk rather than a small file, carrying state you did not ask for, and two runs cannot share it at the same time. Being able to commit a script that has no password in it, and hand the session file separately, is a structural improvement rather than a convenience.</p>
+  <p>The code that does the scraping then contains no credentials at all, which means it can go in a repository and the session file can be handed over separately. Selenium's equivalent is pointing Chrome at a saved user-data directory. That works and it is heavier: a whole profile on disk rather than a small file, carrying state you did not ask for, and two runs cannot share it simultaneously.</p>
 
-  <h2>One process, many pages</h2>
+  <p>Sessions expire, so this needs a check that notices you are logged out and stops rather than scraping a page of login prompts. I have been caught by that twice.</p>
 
-  <p>Playwright's Python API has an async version, so a single script can drive several pages at once inside one process. The Selenium way to get concurrency is a browser per thread, which is much heavier and is the reason a large Selenium setup ends up wanting a <a href="https://www.selenium.dev/documentation/grid/" target="_blank" rel="noopener">Grid</a> — a separate service that hands out browsers. If you would rather not write the pool yourself, <a href="https://crawlee.dev/python/" target="_blank" rel="noopener">Crawlee</a> wraps Playwright with request queueing, retries and concurrency limits already built, which is the shortest route to concurrency that does not involve managing browsers by hand.</p>
+  <h2>Browser versioning and unattended jobs</h2>
 
-  <p>One caution from the logs: concurrency is where scraping bugs come from. Three of the bugs in my <a href="/blog/a-year-of-ingestion-bugs/">common data ingestion bugs</a> were caused by parallel workers, not by the sites. Running eight pages at once also means arriving at a site eight times as fast, which is the fastest way to turn a working scraper into a blocked one.</p>
+  <p>Selenium drives a browser you supply, so the browser and its driver must be version-compatible while Chrome updates itself roughly monthly. This was a genuine operational cost for years, patched over with <a href="https://pypi.org/project/webdriver-manager/" target="_blank" rel="noopener">webdriver-manager</a> downloading a matching driver at startup. Since 4.6 Selenium ships <a href="https://www.selenium.dev/documentation/selenium_manager/" target="_blank" rel="noopener">Selenium Manager</a>, which resolves both the driver and, since 4.11, the browser itself. If you last touched Selenium before that, most of what you remember about driver pain is fixed.</p>
 
-  <h2>The operational difference nobody mentions until it breaks</h2>
+  <p>Playwright pins its own browser builds through <code>playwright install</code>, so the browser is a dependency of the project rather than a property of the machine. A scrape that ran last month runs the same way this month and the same way in a container. For jobs on a schedule I value that more than any API difference, and it is the one thing I would not want to give up.</p>
 
-  <p>Selenium drives a browser you supply. That means the browser and the driver that talks to it have to be version-compatible, and Chrome updates itself roughly monthly. The usual patch is <a href="https://pypi.org/project/webdriver-manager/" target="_blank" rel="noopener">webdriver-manager</a>, which downloads a matching driver at runtime — it is in my requirements file for exactly this reason. It works, and it adds a network call at startup to a place where you did not previously have one.</p>
+  <p>Playwright's other operational advantage is the <a href="https://playwright.dev/python/docs/trace-viewer" target="_blank" rel="noopener">trace viewer</a>, which records a run and replays it with the DOM, network and console at each step. Debugging a scrape that failed at three in the morning against a page that has since changed is otherwise close to impossible. I ignored it for far too long.</p>
 
-  <p>Since 4.6, Selenium ships <a href="https://www.selenium.dev/documentation/selenium_manager/" target="_blank" rel="noopener">Selenium Manager</a>, which does the same job in-process and makes <code>webdriver-manager</code> largely unnecessary — worth knowing if you last touched Selenium before that, because it removes most of the version-matching pain this paragraph describes.</p>
+  <h2>Blocking: where neither tool helps</h2>
 
-  <p>Playwright downloads and pins its own browser builds through <code>playwright install</code>. The browser is a dependency of the project rather than a property of the machine, so a script that ran last month runs the same way this month, and the same way in a container. For unattended jobs on a schedule, that is worth more than any API difference.</p>
+  <p>Neither tool helps with the thing that actually stops scrapers, which is being refused. A site I was collecting from started returning <code>405</code> to a plain Python request while a real browser on the same machine loaded the page fine. It was not reading the headers. It was fingerprinting the TLS handshake, which is decided before any header is sent and differs between Python's networking stack and Chrome's. The fix was one import, and no browser.</p>
 
-  <h2>Where the choice makes no difference at all</h2>
+  <pre><code># curl_cffi makes a plain HTTP request whose TLS fingerprint matches Chrome's.
+from curl_cffi import requests as cffi_requests
 
-  <p>Neither tool helps with the thing that actually stops scrapers, which is being refused. The clearest example: Trendlyne, a stock-data site used to fill gaps in a price history, started returning <code>405</code> to a plain Python request. It was not looking at the code, the headers, or the user agent. It was looking at the shape of the TLS handshake — the pattern of the encrypted connection itself, which differs between Python's networking library and a real Chrome. No amount of browser automation choice changes that; what fixed it was <a href="https://github.com/lexiforest/curl_cffi" target="_blank" rel="noopener"><code>curl_cffi</code></a>, which makes a plain HTTP request whose handshake matches Chrome's, and no browser at all:</p>
+resp = cffi_requests.get(url, headers=HEADERS, impersonate="chrome131")</code></pre>
 
-  <pre><code># curl_cffi impersonates a real browser's TLS/JA3 fingerprint, which is what
-# gets past Trendlyne's Cloudflare bot mitigation (plain `requests` gets 405'd).
-from curl_cffi import requests as cffi_requests</code></pre>
+  <p>Which leads to the largest saving available here and the reason I would not start this decision with either tool. A browser is the right answer when the data genuinely does not exist until JavaScript runs. Otherwise it is the most expensive thing on the shelf: starting Chrome to fetch a JSON endpoint costs hundreds of megabytes and about a second of startup to do what one HTTP request does in 200 milliseconds. Of my own collection scripts, roughly half never open a browser, and one of them is still named <code>trendlyne_selenium.py</code> despite containing no Selenium — it fetches HTML directly now, and I never renamed the file.</p>
 
-  <p>That is the general shape of it. A browser is the answer when the data genuinely does not exist until JavaScript runs. For everything else it is the most expensive tool available. Starting Chrome to fetch a JSON endpoint costs hundreds of megabytes of memory and a second of startup, to do what one HTTP request does in 200 milliseconds. Of the 32 scripts, 18 never open a browser. One of those 18 is still called <code>trendlyne_selenium.py</code> and contains no Selenium at all — it drives nothing, fetches HTML directly, and the filename is left over from the version that needed a browser to get the same rows. <a href="/blog/why-scrapers-get-blocked/">Why your scraper gets blocked</a> goes through the rest of that stack.</p>
+  <p>The check takes two minutes. Open the network tab, reload the page, filter to XHR, and look at what the page itself is calling. If the numbers you want arrive in a JSON response, call that endpoint with the right <code>Referer</code> and skip the browser entirely. When that is not possible and you do need a browser, <a href="https://playwright.dev/python/docs/network" target="_blank" rel="noopener">request interception</a> earns its keep immediately: blocking images, fonts and analytics typically halves page-load time, and you were never going to parse them.</p>
 
-  <h2>How I would choose now</h2>
+  <h2>Choosing between them</h2>
 
-  <p><strong>New scraping work: Playwright.</strong> Locators remove a class of error, sessions save to a file, browsers are pinned, and concurrency does not need a second service.</p>
+  <p>For new scraping work, Playwright, mostly for the pinned browsers and the saved session, with locators and the trace viewer as the reasons I would not switch back.</p>
 
-  <p><strong>An existing Selenium suite: leave it.</strong> Both Selenium scripts still run. Nothing above is worth a rewrite on its own, and a working scraper is worth more than a modern one. I ported nothing; I only wrote new work in the new tool.</p>
+  <p>For an existing Selenium suite, nothing above justifies a rewrite. Both of my Selenium scripts still run and I have never ported them. A working scraper is worth more than a modern one, and Selenium Manager removed the maintenance argument that would have been my strongest reason.</p>
 
-  <p><strong>Cross-browser testing across a fleet, or a team already running Grid:</strong> Selenium is a <a href="https://www.w3.org/TR/webdriver2/" target="_blank" rel="noopener">W3C standard</a> with two decades of infrastructure behind it. That matters far more for a test suite that must run on browsers you do not control than for a scraper you run yourself.</p>
+  <p>For cross-browser work on browsers you do not control, or a team already running <a href="https://www.selenium.dev/documentation/grid/" target="_blank" rel="noopener">Grid</a>, Selenium, and it is not close. That is a testing problem rather than a scraping one, and it is what the W3C standard and twenty years of infrastructure are for.</p>
 
-  <p><strong>Neither, if the page is not the point.</strong> Open the network tab, find the endpoint the page is calling, and call that instead. It is faster, it breaks less often, and it is a smaller thing to be blocked for.</p>
+  <p>And if you would rather not manage browsers, queues and retries yourself, <a href="https://crawlee.dev/python/" target="_blank" rel="noopener">Crawlee</a> wraps Playwright with request queueing, concurrency limits and retries already built. I wrote most of that by hand before I knew it existed, which I would not do again.</p>
 
-  <p>One limitation on all of the above: this comes from porting the same jobs between tools over about two years, not from a controlled benchmark. I did not run both against the same site on the same day with a stopwatch, so nothing here should be read as a speed claim. The parts I would defend are the ones about failure modes and operations, because those I have logs for.</p>
+  <p>One limitation on all of this: it comes from moving the same jobs between the two tools over about two years, not from a controlled benchmark. I never ran both against the same site on the same day with a stopwatch, so nothing here is a speed claim. The parts I would defend are the failure modes and the operational ones, because those left logs.</p>
 
   <h2>References and further reading</h2>
 
@@ -297,35 +285,35 @@ from curl_cffi import requests as cffi_requests</code></pre>
     <div class="post-grid post-grid--sm">
       <a class="post-card post-card--sm" href="/blog/how-to-test-a-data-pipeline/">
         <div class="post-card__media">
-          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Test a Data Pipeline: What Tests Miss</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">92 tests passed while three features were broken. What to test instead, and the control run that comes first.</p>
+          <p class="post-card__excerpt">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
         <div class="post-card__media">
-          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
           <h3 class="post-card__title">Data Ingestion Bugs and How to Catch Them</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.</p>
+          <p class="post-card__excerpt">Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
         <div class="post-card__media">
-          <img src="/images/blog/scraping.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pagination.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Scrape a Site That Paginates by Date</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.</p>
+          <p class="post-card__excerpt">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
         </div>
       </a>
     </div>

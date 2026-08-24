@@ -3,7 +3,7 @@
     "slug": "playwright-vs-selenium",
     "title": "Playwright vs Selenium: Which to Use and When",
     "h1": "Playwright vs Selenium: which to use and when",
-    "dek": "Twelve scrapers moved from Selenium to Playwright. Where it helped, and where it changed nothing.",
+    "dek": "Locators, saved sessions and pinned browsers — plus the 52 fixed sleeps that show what auto-waiting does not fix.",
     "description": "Playwright vs Selenium compared on real scrapers: waits, session reuse, async, headless detection, and the one blocking problem no browser tool solves.",
     "shareDescription": "Waits, session reuse, async, headless detection — and the one blocking problem neither tool solves.",
     "tags": [
@@ -18,7 +18,7 @@
     "slug": "why-scrapers-get-blocked",
     "title": "Why Your Scraper Gets Blocked and How to Fix It",
     "h1": "Why your scraper gets blocked, and how to fix it",
-    "dek": "Rotating user agents fixes almost nothing. The four layers that block you: IP, TLS, browser, behaviour.",
+    "dek": "Four layers block you: headers, TLS fingerprint, IP, behaviour. How to tell which one, and the fix for each.",
     "description": "Why scrapers get blocked: TLS fingerprinting, IP reputation, headless detection and rate limits — the four layers, how to tell them apart, and the fix for each.",
     "shareDescription": "TLS fingerprints, IP reputation, headless detection, rate limits — how to tell which one is blocking you.",
     "tags": [
@@ -33,7 +33,7 @@
     "slug": "http-429-retry-logic",
     "title": "HTTP 429: What It Means and How to Retry",
     "h1": "HTTP 429: what it means and how to retry",
-    "dek": "One status code, three meanings — wait, stop, or out of quota. Telling them apart, and honouring Retry-After.",
+    "dek": "One status code, three meanings — wait, stop, or out of quota. How to tell them apart in code.",
     "description": "HTTP 429 handling done properly: transient vs permanent vs exhausted, honouring Retry-After, and why substring matching on error messages breaks retries.",
     "shareDescription": "Transient, permanent, exhausted — three classes, one status code, and the retry loop that kept dying.",
     "tags": [
@@ -48,7 +48,7 @@
     "slug": "local-llm-vs-api",
     "title": "Local LLM vs API: When to Run Your Own Model",
     "h1": "Local LLM vs API: when to run your own model",
-    "dek": "A 7B model on a 6GB GPU against a hosted 70B: 6s vs 1.6s, no daily cap, and which one to reach for.",
+    "dek": "What fits in 6GB, what it costs in latency, and the schema trick that makes a small model usable.",
     "description": "Local LLM vs API compared on the same task: what fits in 6GB VRAM, latency against Groq, constrained decoding, and when a free hosted tier is the wrong default.",
     "shareDescription": "7B local vs hosted 70B on the same job: latency, VRAM sizing, quotas, and constrained decoding.",
     "tags": [
@@ -63,7 +63,7 @@
     "slug": "how-to-test-a-data-pipeline",
     "title": "How to Test a Data Pipeline: What Tests Miss",
     "h1": "How to test a data pipeline: what tests miss",
-    "dek": "92 tests passed while three features were broken. What to test instead, and the control run that comes first.",
+    "dek": "A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.",
     "description": "How to test a data pipeline: why unit tests miss silent failures, measuring a source's noise floor first, and kill-and-resume scenario tests.",
     "shareDescription": "Why a green suite missed three live failures, and the tests that would have caught them.",
     "tags": [
@@ -78,7 +78,7 @@
     "slug": "a-year-of-ingestion-bugs",
     "title": "Data Ingestion Bugs and How to Catch Them",
     "h1": "Data ingestion bugs, and how to catch them",
-    "dek": "About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.",
+    "dek": "Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.",
     "description": "Data ingestion bugs sorted by cause: bot blocks, silently wrong data, concurrency and config — what each looked like, and the guard that caught it.",
     "shareDescription": "Roughly 30 bugs across 32 pipelines, sorted by cause. Eight produced no error at all.",
     "tags": [
@@ -95,7 +95,7 @@
     "slug": "how-i-scraped-nse-insider-filings",
     "title": "How to Scrape a Site That Paginates by Date",
     "h1": "How to scrape a site that paginates by date",
-    "dek": "The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.",
+    "dek": "Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.",
     "description": "How to scrape a date-windowed endpoint: window sizing, resumable backfill, a dedup key that deleted rows, and sources that backfill late.",
     "shareDescription": "180-day windows, a dedup key that silently deleted filings, and the indexing lag that forces a second source.",
     "tags": [
@@ -103,14 +103,14 @@
       "Data engineering"
     ],
     "published": "2026-08-04",
-    "image": "/images/blog/scraping.jpg",
-    "share": "/images/blog/share-scraping.jpg"
+    "image": "/images/blog/pagination.jpg",
+    "share": "/images/blog/share-pagination.jpg"
   },
   {
     "slug": "building-resumable-etl-pipelines",
     "title": "How to Make an ETL Pipeline Safe to Rerun",
     "h1": "How to make an ETL pipeline safe to rerun",
-    "dek": "A rerun should fix data, not corrupt it. Four ways that rule breaks, and the guard for each.",
+    "dek": "A rerun should repair data, not corrupt it. Four ways that rule breaks, and a six-point checklist.",
     "description": "Idempotent, resumable ETL: incremental loads, resume points that survive bad rows, anti-join dedup, and reruns that heal gaps instead of corrupting data.",
     "shareDescription": "Incremental loads, adaptive backoff, and reruns that heal gaps instead of corrupting history.",
     "tags": [
@@ -125,7 +125,7 @@
     "slug": "minute-level-stock-prediction",
     "title": "Can You Predict Stock Prices Minute by Minute?",
     "h1": "Can you predict stock prices minute by minute?",
-    "dek": "61.4% accuracy against a 46.8% baseline — on 70 of 3,100 minutes. Why that is not an edge.",
+    "dek": "Four checks that decide whether a short-horizon model has an edge. One real attempt failed all four.",
     "description": "Minute-level stock prediction on 9.4M NSE ticks: the baseline that matters, threshold tuning that leaks, sample size, and the backtest that settled it.",
     "shareDescription": "61.4% precision against a 46.8% base rate — and why that was not an edge.",
     "tags": [
