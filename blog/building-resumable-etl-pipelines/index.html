@@ -153,83 +153,100 @@
       <a class="share-btn" href="https://api.whatsapp.com/send?text=How%20to%20Make%20an%20ETL%20Pipeline%20Safe%20to%20Rerun%20https%3A%2F%2Fvishnujan.dev%2Fblog%2Fbuilding-resumable-etl-pipelines%2F" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.5-1.2A9 9 0 1 0 12 3Zm0 1.7a7.3 7.3 0 1 1-3.7 13.6l-.3-.2-2.7.7.7-2.6-.2-.3A7.3 7.3 0 0 1 12 4.7Zm4.2 9.1c-.2-.1-1.3-.7-1.5-.7s-.4-.1-.5.1-.6.7-.7.9-.3.2-.5.1a6 6 0 0 1-1.8-1.1 6.6 6.6 0 0 1-1.2-1.6c-.1-.2 0-.4.1-.5l.4-.4a1.4 1.4 0 0 0 .2-.4.4.4 0 0 0 0-.4c0-.1-.5-1.3-.7-1.7s-.4-.4-.5-.4h-.4a.9.9 0 0 0-.6.3 2.6 2.6 0 0 0-.8 2 4.5 4.5 0 0 0 1 2.4 10.2 10.2 0 0 0 3.9 3.4c1.8.7 1.8.5 2.2.4a2.3 2.3 0 0 0 1.5-1.1 1.9 1.9 0 0 0 .1-1.1c0-.1-.2-.2-.4-.3Z"/></svg></a>
     </div>
     </div>
-    <p class="post-head__dek">A rerun should fix data, not corrupt it. Four ways that rule breaks, and the guard for each.</p>
+    <p class="post-head__dek">A rerun should repair data, not corrupt it. Four ways that rule breaks, and a six-point checklist.</p>
   </div>
   <figure class="post-hero">
     <img src="/images/blog/resumable-etl.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>A pipeline is safe to rerun when running it twice leaves the data no worse than running it once. That is easy to say and easy to get wrong. The examples here come from 32 scripts that download Indian market data — prices, company announcements, insider filings — most of them running unattended on a schedule. The rule I hold all of them to is simple to state: running a script again must leave the data better than before, or at least no worse. Fill in a gap, correct a bad row, otherwise change nothing.</p>
+  <p>A pipeline is safe to rerun when running it twice leaves the data no worse than running it once. Say it as a rule you can hold code to: <strong>a rerun must fill a gap, correct a bad row, or change nothing at all.</strong> Never duplicate, never delete, never move the finish line backwards.</p>
 
-  <p>That sounds like it should be the default. It is not. I have broken it four separate ways, and every time the result was a dataset that looked completely normal. This is what each break was, and what stops it now.</p>
+  <p>That sounds like it should be the default and it is not. Below are the four ways the rule breaks in practice, the guard for each, and the one case that stays open. The examples come from scheduled scripts collecting market data, but every failure here belongs to any pipeline that runs on a timer against somebody else's system.</p>
 
-  <h2>What “safe to rerun” has to mean</h2>
+  <h2>The design decision everything else follows from</h2>
 
-  <p>A script that downloads data once is easy. You run it, you look at the output, you can see whether it worked. The second run is different, because now the script has to decide what it already has and what it still needs — and it makes that decision by reading data that a previous run wrote.</p>
+  <p>The second run is the hard one. It has to decide what it already has and what it still needs, and there are only two places to get that answer from: a separate progress store, or the data itself.</p>
 
-  <p>Every one of these pipelines works out where to continue by looking at the data itself: it reads the file, finds the newest row, and asks the source for everything after that. No separate progress file, no database of what has been done. If a run is interrupted, the next one just reads the file and carries on. That is a genuinely good property — there is no progress file to get out of step with reality, because reality is the file.</p>
+  <p>Reading it from the data — find the newest row, ask the source for everything after that — is the better default for small and medium pipelines. There is no progress file to drift out of step with reality, because reality <em>is</em> the file. An interrupted run needs no cleanup: the next one reads what landed and carries on.</p>
 
-  <p>It also means <strong>every row you write is an instruction to your future self.</strong> Write a bad row and you have not just stored bad data, you have told the next run to start from the wrong place. That single fact explains three of the four failures below.</p>
+  <p>The price of that choice is one sentence, and it explains three of the four failures below:</p>
 
-  <h2>Break one: a row with no prices in it</h2>
+  <p><strong>Every row you write is an instruction to your future self.</strong> Write a bad row and you have not merely stored bad data, you have told the next run to start from the wrong place. Which means the checkpoint must be computed from <em>validated</em> rows, not from all rows — and "valid" has to be defined explicitly, per pipeline, in code.</p>
 
-  <p>The price source returns a day's trading data all-or-nothing. If it is rate-limiting you, or if you ask for today before the market has settled, you get back a row that has a date on it and no prices — the fields are simply empty. My loader wrote those rows to the file like any other. Then the next run did this:</p>
+  <h2>Break 1: an empty row becomes the checkpoint</h2>
+
+  <p>Many sources return a record all-or-nothing. Ask for a period that has not settled yet, or get quietly throttled, and you receive a row carrying a date and no values at all. Write it like any other row, then do this:</p>
 
   <pre><code># Where do we continue from? The newest date in the file.
 start = pd.read_csv(path)["Date"].max()</code></pre>
 
-  <p>An empty row dated today is the newest date in the file. So the pipeline concluded it was fully up to date, and every real day of trading behind that empty row was never requested again. The gap was permanent, and it was the gap-filling logic that made it permanent.</p>
+  <p>An empty row dated today is the newest date in the file. The pipeline concludes it is up to date, and every real period behind that empty row is never requested again. The gap is permanent, and it is the gap-filling logic that made it permanent.</p>
 
-  <p>The fix is one condition — continue from the newest row that actually has a price in it:</p>
+  <p><strong>The guard is one condition plus two policies.</strong> Continue from the newest row that actually carries a value:</p>
 
   <pre><code># Continue only from rows that actually carry a closing price.
 df = pd.read_csv(path)
 start = df[df["Close"].notna()]["Date"].max()</code></pre>
 
-  <p>Two things follow from it. A response where every row is empty is now treated as a failed download rather than as data, so it never reaches the file. And a pass at startup deletes empty rows that earlier runs already wrote, so old damage repairs itself instead of sitting there forever. A row dated in the future gets the same treatment, for the same reason — left alone it convinces the pipeline it has data through 2027 and it stops fetching entirely.</p>
+  <p>Then: a response where every row is empty is a <em>failed fetch</em>, not data, so it never reaches the file. And a pass at startup deletes empty rows earlier runs already wrote, so old damage repairs itself rather than sitting there forever. Rows dated in the future get identical treatment — left alone, one of them convinces the pipeline it has data through 2027 and it stops fetching entirely.</p>
 
-  <h2>Break two: the file kept changing its name</h2>
+  <h2>Break 2: the storage location is derived from a network call</h2>
 
-  <p>Each stock gets its own file, and I named those files using the company's full name, looked up at the moment the file was created. That lookup goes over the network, and it is rate-limited — so it returns the proper company name when the source is healthy, and just the ticker symbol when it is not. Rename a company upstream and you get a third answer.</p>
+  <p>Per-item files named from a value looked up at runtime — a company name, a title, a slug — get a different name whenever that lookup degrades. Healthy source: the full name. Rate-limited: the bare identifier. Renamed upstream: a third answer.</p>
 
-  <p>Three answers meant three filenames for one stock. And since the pipeline works out what it already has by reading the file, a new filename looked exactly like a stock with no history at all — so it downloaded twenty years from scratch into it. I ended up with stocks spread across three files, each holding a different partial copy of the same history, none of them complete.</p>
+  <p>Three answers means three files for one item. And because the pipeline works out what it has by reading the file, a new filename looks exactly like an item with no history, so it downloads the entire archive again into it. The end state is one item spread across three files, each holding a different partial copy, none complete.</p>
 
-  <p>Two changes fixed it. Filenames are now resolved by looking for an existing file for that symbol and reusing whatever it is already called, so the name is decided once and then remembered rather than recalculated every run. And a pass at startup merges any duplicate files that already exist into one, keeping all the rows and preferring the version that has real prices where two disagree.</p>
+  <p><strong>The guard:</strong> resolve the path from the stable identifier only. In practice that means looking for an existing file for that identifier and reusing whatever it is already called — the name is decided once and then remembered, never recalculated. Then add a startup pass that merges duplicates already on disk into one file, keeping the union of rows and preferring the copy with real values where two disagree.</p>
 
-  <p>The general version of this: <strong>anything you derive from a network call will eventually come back different.</strong> If that value decides where data gets stored, one bad minute at the source permanently splits your dataset in two.</p>
+  <p>Stated generally: <strong>anything you derive from a network call will eventually come back different.</strong> If that value decides where data is stored, one bad minute at the source permanently splits your dataset.</p>
 
-  <h2>Break three: the duplicate check that created duplicates</h2>
+  <h2>Break 3: the duplicate check that creates duplicates</h2>
 
-  <p>Reruns deliberately re-download a few days they already have, because data sometimes arrives late and a run that starts exactly where the last one stopped would step over it. So the pipeline constantly sees rows it already has, and needs a reliable way to recognise them.</p>
+  <p>Rerunning deliberately re-reads a few periods you already have, because data arrives late and a run starting exactly where the last one stopped steps over it. So the pipeline constantly sees rows it already holds, and needs a reliable way to recognise them.</p>
 
-  <p>It does that by building a key from a few fields that together identify a row, and discarding rows whose key it already holds. I originally implemented the check as a merge — joining the new rows against the stored rows to see which matched. That works right up until the stored data itself contains duplicates, at which point each new row matches several stored rows and you get one output row per match. The check meant to remove duplicates was multiplying them.</p>
+  <p>The usual approach is a key built from a few fields that together identify a row, discarding rows whose key you already hold. Implement that check as a <em>merge</em> — joining new rows against stored rows to see which match — and it works right up until the stored data itself contains duplicates. Then each new row matches several stored rows and you get one output row per match. The check meant to remove duplicates multiplies them.</p>
 
-  <p>Asking a simpler question avoids this. Build the set of keys already stored, then keep only new rows whose key is not in that set:</p>
+  <p><strong>The guard: ask the simpler question.</strong> Build the set of keys already stored, keep only new rows whose key is not in it. This is an anti-join, and it cannot inflate anything because it never joins:</p>
 
   <pre><code>def deduplicate(new_df, existing_df):
     new_keys = _composite_key(new_df, DEDUP_KEYS)
     existing_keys = set(_composite_key(existing_df, DEDUP_KEYS))
     return new_df[(~new_keys.isin(existing_keys)).values]</code></pre>
 
-  <p>This never joins anything, so it cannot multiply rows no matter what mess is already in the file. It answers yes or no about each incoming row and nothing else.</p>
+  <p>Two things underneath it matter as much as the anti-join.</p>
 
-  <p>There is a catch underneath, which is that a key only works if the same row always produces the same key — and it does not. The same quantity arrives as <code>629221</code> one time and <code>629221.0</code> the next. The same date is <code>15-Jan-2026</code> in one response and <code>2026-01-15</code> in another. Compared as text those are different, so the same row gets stored twice. Every field is therefore forced into one standard form before the key is built: dates to a single format, anything numeric to an actual number.</p>
+  <p><strong>The key must be built from fields that exist.</strong> Name three columns that are not in the response and every row gets the same empty key, which collapses entire days of records into one row with no error anywhere. Assert the columns exist before you build the key. If you would rather stay with <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener"><code>DataFrame.merge</code></a>, <code>validate="one_to_one"</code> raises on the inflation case instead of performing it quietly.</p>
 
-  <p>One warning, because this failure is invisible from the outside: the key has to be built from fields that genuinely exist in the response. Mine once named three fields that were not real columns, which gave every row an identical empty key and collapsed entire days of records into a single row, with no error at any point. If you are using <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener"><code>DataFrame.merge</code></a> for this, <code>validate="one_to_one"</code> turns that silent inflation into an error you can actually see.</p>
+  <p><strong>The same row must always produce the same key.</strong> It will not, by default. The same quantity arrives as <code>629221</code> one time and <code>629221.0</code> the next; the same date as <code>15-Jan-2026</code> here and <code>2026-01-15</code> there. Compared as text those differ, so the same row is stored twice. Force every field into one canonical form before the key is built — dates to a single format, anything numeric to an actual number. If your store is a database rather than files, this is what <code>INSERT ... ON CONFLICT DO NOTHING</code> against a unique constraint gives you for free, and it is the better answer when it is available.</p>
 
-  <h2>Break four: going too fast and writing the wreckage</h2>
+  <h2>Break 4: going too fast, and writing the wreckage</h2>
 
-  <p>All of the above assumes the source keeps answering properly. Rate limits are their own subject — a refusal that clears in seconds and a quota that is finished for the month arrive as the same status code, which I unpicked in <a href="/blog/http-429-retry-logic/">what a 429 really means</a>. Here the problem is worse than a refusal. Hit a rate limit and you often do not get a clean refusal at all: you get a partial or empty response. That is precisely how bad rows end up in the file in the first place. So backing off is not politeness here, it is a data-quality control.</p>
+  <p>All of the above assumes the source keeps answering properly. Hit a rate limit and you often do not get a clean refusal — you get a partial or empty response, which is precisely how bad rows enter the file in the first place. <strong>Backing off is not politeness, it is a data-quality control.</strong></p>
 
-  <p>The script that downloads daily prices adjusts its own speed. It starts with five downloads running at once, drops one whenever the source returns an error, and adds one back after fifteen requests in a row succeed. Individual requests get three attempts with a widening wait between them, and a ten-second cut-off. It speeds up when the source is healthy and slows down the moment it pushes back, without me picking a fixed delay that is either too slow on a good day or too aggressive on a bad one.</p>
+  <p>A fixed delay is the wrong instrument: too slow on a good day, too aggressive on a bad one. An adaptive pool finds the source's tolerance by itself. Start with five requests in flight, drop one whenever the source returns an error, add one back after fifteen consecutive successes. Individual requests get three attempts with a widening wait and a hard ten-second cut-off.</p>
 
-  <h2>The case I still cannot handle</h2>
+  <p>Which refusals are worth retrying at all is its own question, since a limit that clears in three seconds and a quota that is finished for the month arrive as the same status code — that is unpicked in <a href="/blog/http-429-retry-logic/">what a 429 really means</a>.</p>
 
-  <p>Everything above makes reruns recover from <em>my</em> mistakes. None of it helps when the source changes a value it already gave me.</p>
+  <h2>The checklist</h2>
 
-  <p>If a company corrects a filing it submitted last month, the duplicate check looks at the corrected row, recognises the key, decides it already has that record, and throws the correction away. Converging on a stable dataset and accepting corrections pull in opposite directions, and I picked one without ever really deciding to. For prices it mostly works out, because adjustments for stock splits and similar events get recalculated anyway. For filings it is a genuine hole.</p>
+  <p>Everything above compresses into six things to put in a scheduled pipeline before you trust it:</p>
 
-  <p>The gap still open is telling "the source had nothing new" apart from "the source refused to answer". It is the failure mode that recurs most often across these pipelines, because both outcomes look identical in the output. I wrote up the whole accounting of that in <a href="/blog/a-year-of-ingestion-bugs/">common data ingestion bugs</a>. The fix for both problems is probably the same thing: re-download data I already have on a schedule and compare it against what I stored. That is the next thing I want to build.</p>
+  <ul>
+    <li><strong>Compute the checkpoint from validated rows only</strong>, and define "valid" explicitly.</li>
+    <li><strong>Treat an all-empty response as a failed fetch</strong>, never as data.</li>
+    <li><strong>Repair on startup</strong> — purge empty and future-dated rows, merge duplicate files. Old damage should heal, not accumulate.</li>
+    <li><strong>Overlap on purpose.</strong> Resume from a buffer behind the checkpoint, not from the checkpoint, so late-arriving records are picked up.</li>
+    <li><strong>Deduplicate with an anti-join on a normalised key</strong> whose columns you have asserted exist.</li>
+    <li><strong>Write atomically.</strong> Temporary file, then <a href="https://lwn.net/Articles/457667/" target="_blank" rel="noopener">rename over the original</a> — the one filesystem operation that either happens or does not. A crash mid-write otherwise leaves a truncated file that the next run reads as the complete dataset.</li>
+  </ul>
+
+  <h2>The case this design cannot handle</h2>
+
+  <p>All of it makes reruns recover from <em>your</em> mistakes. None of it helps when the source changes a value it already gave you.</p>
+
+  <p>If a record is corrected upstream, the duplicate check sees a key it already holds, decides it has that record, and throws the correction away. Converging on a stable dataset and accepting corrections pull in opposite directions, and using set membership picks one without ever really deciding to. For prices it mostly works out, since split adjustments get recalculated anyway; for filings and anything compliance-adjacent it is a genuine hole. The fix, when it matters, is to key on identity and store versions — the pattern a <a href="https://docs.getdbt.com/docs/build/snapshots" target="_blank" rel="noopener">dbt snapshot</a> implements — so a changed value becomes a new row rather than a discarded one.</p>
+
+  <p>The gap still open is telling "the source had nothing new" apart from "the source refused to answer", because both produce zero rows and look identical in the output. The likely fix for both problems is the same: re-download data you already have, on a schedule, and diff it against what you stored. The full accounting of what has broken across these pipelines, and the guards that came out of it, is in <a href="/blog/a-year-of-ingestion-bugs/">data ingestion bugs and how to catch them</a>.</p>
 
   <h2>References and further reading</h2>
 
@@ -277,7 +294,7 @@ start = df[df["Close"].notna()]["Date"].max()</code></pre>
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Test a Data Pipeline: What Tests Miss</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">92 tests passed while three features were broken. What to test instead, and the control run that comes first.</p>
+          <p class="post-card__excerpt">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
@@ -288,7 +305,7 @@ start = df[df["Close"].notna()]["Date"].max()</code></pre>
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
           <h3 class="post-card__title">Data Ingestion Bugs and How to Catch Them</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.</p>
+          <p class="post-card__excerpt">Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
@@ -299,7 +316,7 @@ start = df[df["Close"].notna()]["Date"].max()</code></pre>
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Scrape a Site That Paginates by Date</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.</p>
+          <p class="post-card__excerpt">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
         </div>
       </a>
     </div>

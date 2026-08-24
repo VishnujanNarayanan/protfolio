@@ -418,3 +418,80 @@ reach outside the page.
 files, private notes. Elide them (`CHANGELOG.md  PRD.md  job_automation_architecture.md`) or
 leave the list generic. Same for `http://localhost:...` URLs in pasted output: cut the host
 (`'.../resume/....pdf'`), since the point is never the address.
+
+---
+
+## 9. The post is about the problem, not about the project
+
+Set 2026-08-24, after rewriting all nine posts. Section 8 said don't reference your own work
+*cold*. That was not strong enough: every post had been *built around* a project, with the
+setup clause bolted on. A reader who arrived from a search for "why does my scraper get
+blocked" was being handed a tour of somebody else's codebase with the answer distributed
+through it. This section outranks section 8 and applies to every post from here on.
+
+**The reader came for the problem. Give them the answer, in general form, and let the project
+be evidence underneath it.** The test: delete every sentence that mentions a project, a repo,
+a count of scripts, a bot, or a file name. If what is left is still a complete, useful answer
+to the post's title, the framing is right. If it collapses into fragments, the post is a
+project write-up with SEO on top.
+
+### The structure that comes out of that
+
+1. **Open on the problem in the reader's words**, with the number or failure that makes it real.
+   Not "this pipeline had 92 unit tests" — *"a data pipeline can have a green test suite and be
+   completely broken in production, and this is normal rather than unlucky."*
+2. **Say what they will leave with, early.** A short verdict paragraph near the top ("new work,
+   use Playwright; existing suite, leave it; check first whether you need a browser at all") is
+   not a spoiler. It is why they keep reading, and it is what a search result should be able to
+   promise.
+3. **Headings are the reader's problems or the steps of the solution** — "Step 1: find the window
+   size the hard way", "Check 2: how many decisions is the number made of?", "Layer 2 — how you
+   connect". Not "Failure 3", "Break two", "What my pipeline does".
+4. **Every incident ends in a generalisation the reader can apply**, in bold, stated as a rule:
+   *the guard*, *the tell*, *the technique*. The anecdote is there to earn the rule, and the rule
+   is what the reader takes away. One per section is the right density.
+5. **A checklist or ordered "what to do" section near the end.** Cheapest action first.
+6. **The project appears twice at most**: one clause of setup where a worked example needs it
+   ("a scheduled pipeline that collects job adverts, scores them, and messages the good ones"),
+   and one line of provenance in the last paragraph before References, saying where the numbers
+   came from. Everything else about it is cut.
+
+### Anonymise the example unless the name does work
+
+Write "a stock-data site", "a chat platform", "one provider" rather than the vendor name, unless
+naming it gives the reader something actionable — a doc page they can read, a limit they can
+check, a library that fixes it. `curl_cffi`, Ollama, Groq's published limits and NSE's endpoint
+all earn their names. The site that happened to 405 does not.
+
+### Value the reader can act on today
+
+Every post should contain, and be checkable for:
+
+- **A technique they can apply in an hour** — run your suite in a fresh clone; fetch
+  `tls.browserleaks.com/json` from both your script and your browser and compare; measure the
+  noise floor with one unchanged rerun; pass `validate="one_to_one"`.
+- **A number they did not have** — 2.44% source churn, 52 blind sleeps against 25 real waits,
+  71% empty fields, a 46.8% base rate, 45 documents a day.
+- **Tools and public repos, linked at the point of the claim** as well as in References.
+- **The tell**: how the reader recognises that *this* is the failure they have, as opposed to the
+  three that look identical. This is the single most valuable thing a debugging post can carry
+  and it is the easiest to leave out.
+
+### SEO, without writing for a crawler
+
+- The title is the search phrase, and the first paragraph answers it directly. If someone reads
+  only the title and the opening, they should already have the short answer.
+- The h1 and the first `<h2>`s use the words people type — "why your scraper gets blocked",
+  "how to test a data pipeline" — not internal vocabulary.
+- The dek is a promise of value, not a description of the author's week. "A green suite is
+  evidence about your code, not your data" beats "92 tests passed while three features were broken".
+- Slugs and canonicals never change once published. Retitle freely in `posts.json`; the slug stays.
+- Internal links between posts, in the body at the point they are relevant, plus the grouped
+  References at the end.
+
+### What stays from the old sections
+
+Everything in sections 1–7 still applies: no throat-clearing, calibrated hedges, publish the
+screwups, plain-fact paragraph endings, define the term in one clause the first time, and never
+explain how the post was made. The References section (section 6, "Every post ends with
+References") is unchanged and is still a large part of what the reader is being given.

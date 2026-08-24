@@ -153,27 +153,33 @@
       <a class="share-btn" href="https://api.whatsapp.com/send?text=Can%20You%20Predict%20Stock%20Prices%20Minute%20by%20Minute%3F%20https%3A%2F%2Fvishnujan.dev%2Fblog%2Fminute-level-stock-prediction%2F" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.5-1.2A9 9 0 1 0 12 3Zm0 1.7a7.3 7.3 0 1 1-3.7 13.6l-.3-.2-2.7.7.7-2.6-.2-.3A7.3 7.3 0 0 1 12 4.7Zm4.2 9.1c-.2-.1-1.3-.7-1.5-.7s-.4-.1-.5.1-.6.7-.7.9-.3.2-.5.1a6 6 0 0 1-1.8-1.1 6.6 6.6 0 0 1-1.2-1.6c-.1-.2 0-.4.1-.5l.4-.4a1.4 1.4 0 0 0 .2-.4.4.4 0 0 0 0-.4c0-.1-.5-1.3-.7-1.7s-.4-.4-.5-.4h-.4a.9.9 0 0 0-.6.3 2.6 2.6 0 0 0-.8 2 4.5 4.5 0 0 0 1 2.4 10.2 10.2 0 0 0 3.9 3.4c1.8.7 1.8.5 2.2.4a2.3 2.3 0 0 0 1.5-1.1 1.9 1.9 0 0 0 .1-1.1c0-.1-.2-.2-.4-.3Z"/></svg></a>
     </div>
     </div>
-    <p class="post-head__dek">61.4% accuracy against a 46.8% baseline — on 70 of 3,100 minutes. Why that is not an edge.</p>
+    <p class="post-head__dek">Four checks that decide whether a short-horizon model has an edge. One real attempt failed all four.</p>
   </div>
   <figure class="post-hero">
     <img src="/images/blog/intraday-model.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>Can you predict stock prices minute by minute? The question here was narrow: will this stock be higher or lower one minute from now? I had 9.4 million raw records from the National Stock Exchange to work with, covering 31 large Indian companies. This is what I built, what it scored, and the two ways I nearly convinced myself it worked.</p>
+  <p>Short answer: not from price history alone, and the interesting part is <em>how you find that out</em> — because a badly evaluated model will tell you it works, in a way that looks like a genuine result and survives casual review.</p>
 
-  <p>Here is the headline, stated the way it should be stated. On my test data, prices went up in 46.8% of minutes. That is the number a model has to beat. A program that ignores every input and always guesses "up" is right 46.8% of the time. scikit-learn will build you that program in one line as a <a href="https://scikit-learn.org/stable/modules/generated/sklearn.dummy.DummyClassifier.html" target="_blank" rel="noopener">DummyClassifier</a>, and every result should be quoted against it. My best setup was right 61.4% of the time — which sounds like a real result until you see that it only made that guess 70 times out of 3,100 opportunities.</p>
+  <p>This is the evaluation procedure for a short-horizon price model, in the order it has to happen, with the numbers from one real attempt: 9.4 million exchange records, 31 large Indian companies, predicting whether a stock will be higher one minute from now. The headline was 61.4% accuracy against a 46.8% base rate. It was not an edge, and there are four checks that say so.</p>
 
-  <h2>Turning 9.4 million records into something you can model</h2>
+  <h2>Check 0: what does the model have to beat?</h2>
 
-  <p>The raw data comes in two kinds. Trades are records of shares actually changing hands — 2.9 million of them. Quotes are the prices buyers and sellers were advertising at a moment in time, whether or not anyone accepted — 6.4 million of those. Together, 9.4 million rows across 31 companies, one file each.</p>
+  <p>Before a model exists, compute what guessing gets you. In this test data, prices went up in 46.8% of minutes. So a program that ignores every input and always answers "up" is right 46.8% of the time — that, not 50%, is the number to quote every result against. <a href="https://scikit-learn.org/stable/modules/generated/sklearn.dummy.DummyClassifier.html" target="_blank" rel="noopener">scikit-learn's DummyClassifier</a> builds it in one line, and it should be the first row of every results table you produce.</p>
 
-  <p>You cannot usefully predict anything from individual records at that level. Most of what you see minute-to-minute at tick resolution is the mechanics of how an exchange matches orders, not information about where the price is going. So the first job is to zoom out. Every record is grouped by company and by minute, and each group collapses into a single row: the open, high, low and close price for that minute, the total volume traded, and the average gap between buying and selling prices.</p>
+  <p>Class balance shifts by asset and by period, so recompute it on the exact test slice you are reporting. A model quoted at "58% accurate" on a series that rises 57% of the time has done nothing.</p>
 
-  <p>That leaves about 11,600 rows. Going from 9.4 million records to 11,600 is not just making the file smaller — it is a decision that you believe something predictable happens on a one-minute timescale and that anything faster is noise. It is the most consequential choice in the whole project, and it gets made before any modelling starts.</p>
+  <h2>Aggregation is a modelling decision, not preprocessing</h2>
 
-  <h2>Defining the question and holding data back</h2>
+  <p>Raw market data comes in two kinds. Trades are records of shares actually changing hands — 2.9 million here. Quotes are the prices buyers and sellers were advertising at a moment in time, whether or not anyone accepted — 6.4 million. Together, 9.4 million rows across 31 companies.</p>
 
-  <p>To teach a model, each row needs an answer attached: did the price go up in the following minute? That means taking the closing price and pulling it backwards by one row, so each minute is labelled with what happened next.</p>
+  <p>You cannot usefully predict from individual records at that level: most of what you see tick by tick is the mechanics of how an exchange matches orders, not information about where the price is going. So group by company and by minute, and collapse each group into one row — open, high, low, close, volume, and the average gap between buying and selling prices. That leaves about 11,600 rows.</p>
+
+  <p>Going from 9.4 million records to 11,600 is not just making the file smaller. <strong>It asserts that something predictable happens on a one-minute timescale and that anything faster is noise.</strong> It is the most consequential choice in the project and it is made before any modelling starts. Whatever your domain, write down what your aggregation window assumes and check whether the assumption is defensible, because no later result can rescue it.</p>
+
+  <h2>Two ways to leak the answer, and the guard for each</h2>
+
+  <p>To teach a model, each row needs an answer attached: did the price rise in the following minute? That means pulling the closing price backwards by one row.</p>
 
   <pre><code>for horizon in horizons:                       # 1, 3 and 5 minutes ahead
     merged[f'future_price_{horizon}'] = (
@@ -181,33 +187,31 @@
     merged[f'future_return_{horizon}'] = (
         (merged[f'future_price_{horizon}'] - merged['c']) / merged['c'])</code></pre>
 
-  <p>The <code>groupby('company')</code> is doing real work there. Without it, pulling the price column backwards would take the first minute of one company's trading day and attach it to the last minute of a different company's — inventing an answer out of two unrelated stocks. This is the classic mistake in this kind of work, and it is easy to make.</p>
+  <p><strong>Guard one: group before you shift.</strong> Without <code>groupby('company')</code>, shifting takes the first minute of one company's day and attaches it to the last minute of another's — inventing an answer out of two unrelated series. The same applies to any panel data: users, sensors, regions.</p>
 
-  <p>Then the data has to be split, so the model can be judged on rows it never saw while learning. I held back the last 100 minutes for each company:</p>
+  <p><strong>Guard two: split by time, never at random.</strong> Hold back the last 100 minutes per company:</p>
 
   <pre><code>train = merged.groupby('company').apply(lambda x: x.iloc[:-100]).reset_index(drop=True)
 test  = merged.groupby('company').apply(lambda x: x.iloc[-100:]).reset_index(drop=True)</code></pre>
 
-  <p>31 companies with 100 minutes each is the 3,100 test rows from the opening. Splitting by time rather than at random matters here. Neighbouring minutes share features calculated from rolling windows of recent history. A randomly chosen test row would usually have its own immediate neighbours sitting in the training data. The model would effectively have seen the answer.</p>
+  <p>31 companies × 100 minutes is 3,100 test rows. Neighbouring minutes share features computed from rolling windows of recent history, so a randomly chosen test row would usually have its own immediate neighbours sitting in the training data, and the model would effectively have seen the answer. Features here are averages and volatility of price and volume over the previous 3, 5, 10 and 20 minutes — computed per company so no window spans two stocks, and always backwards so none can see the future.</p>
 
-  <p>The features are averages and volatility of price and volume over the previous 3, 5, 10 and 20 minutes. They are calculated per company, so no window ever spans two stocks, and always backwards, so none can see the future.</p>
+  <p>Those are the traps everyone warns about, and they are the easy ones. The two that actually decided this result are quieter.</p>
 
-  <p>So the obvious traps are handled. The two that actually caught me are quieter.</p>
+  <h2>Check 1: did you tune anything while watching the score?</h2>
 
-  <h2>Trap one: I tuned the dial while watching the score</h2>
-
-  <p>The model does not answer "up" or "down". It produces a number between 0 and 1 for how confident it is, and you choose the level of confidence at which you act. Set it low and you act often on weak signals; set it high and you rarely act but only on strong ones. I tried several levels and kept the one that scored best:</p>
+  <p>The model does not answer "up" or "down". It produces a confidence between 0 and 1, and you choose the level at which you act. Low, and you act often on weak signals; high, and you rarely act but only on strong ones. The natural move is to try several and keep the best:</p>
 
   <pre><code>for threshold in [0.5, 0.6, 0.65, 0.7]:
     preds = (probs &gt; threshold).astype(int)
     precision = precision_score(y_test, preds, zero_division=0)
     print(f"Threshold: {threshold}, Precision: {precision:.4f}, Trades: {preds.sum()}")</code></pre>
 
-  <p>At the middle setting the model acted 1,149 times and was right 47.95% of the time. That is effectively identical to the 46.8% you get by always guessing "up". It is the reading that should carry the most weight in the whole table. Raising the confidence level to 0.6 gave 50.8% over 327 attempts. Pushing higher made it <em>worse</em> than always guessing up, so this was never a quality dial being turned up; it was a shrinking sample.</p>
+  <p>At the middle setting the model acted 1,149 times and was right 47.95% — effectively identical to always guessing up. That is the reading that should carry the most weight in the whole table. Raising the level to 0.6 gave 50.8% over 327 attempts; pushing higher made it <em>worse</em> than always guessing up. So this was never a quality dial being turned up. It was a shrinking sample.</p>
 
-  <p>The best result, 61.4%, came from a random forest with the level set at 0.63. That figure is arithmetically correct and still misleading, because I chose 0.63 by looking at how it scored on the very data I was using to judge it. Held-back data only measures whether a model generalises for as long as you make no decisions based on it. The moment you tune anything against it, it starts measuring how many things you tried. Nothing in my code leaked a future price — the leak was in my process.</p>
+  <p>The best result, 61.4% at a level of 0.63, is arithmetically correct and still misleading, because 0.63 was chosen by looking at how it scored on the very data used to judge it. <strong>Held-back data measures generalisation only for as long as you make no decisions based on it. The moment you tune against it, it measures how many things you tried.</strong> Nothing in the code leaked a future price; the leak was in the process. The fix is a three-way split — one slice to learn from, a second to choose settings on, a third opened exactly once at the end.</p>
 
-  <h2>Trap two: 70 guesses is not evidence</h2>
+  <h2>Check 2: how many decisions is the number actually made of?</h2>
 
   <p>Here is the full result at that setting:</p>
 
@@ -218,33 +222,37 @@ Confusion Matrix:
 Predicted 1 count: 70
 Actual 1 count: 1451</code></pre>
 
-  <p>The model committed 70 times out of 3,100 minutes. It was right 43 times and wrong 27. If it had no skill at all you would expect about 33 right out of 70, so 43 is high. But with numbers this small, that is roughly the margin coin flips give you when they fall your way. Several confidence levels had already been tried, which makes one good-looking result much less impressive than it sounds.</p>
+  <p>The model committed 70 times out of 3,100 minutes: right 43, wrong 27. With no skill you would expect about 33 right out of 70, so 43 is high — and with numbers this small, that is roughly the margin coin flips give you when they fall your way. Several confidence levels had already been tried, which makes one good-looking result far less impressive than it reads.</p>
 
-  <p>The other direction of that grid is more damning. There were 1,451 minutes where the price actually rose, and the model stayed silent for 1,408 of them. It catches about 3% of what it is looking for. This is not a model that predicts the market 61% of the time. It is a model that declines to answer 97.7% of the time and, on the small remainder, has an edge indistinguishable from luck.</p>
+  <p>The other direction of that grid is more damning. There were 1,451 minutes where the price actually rose, and the model stayed silent for 1,408 of them. It catches about 3% of what it is looking for. <strong>This is not a model that predicts the market 61% of the time. It is a model that declines to answer 97.7% of the time and, on the small remainder, has an edge indistinguishable from luck.</strong></p>
 
-  <h2>The test that settled it</h2>
+  <p>The general rule: always report the number of decisions alongside the rate, and treat a precision figure built from fewer than a few hundred as a hypothesis rather than a result. Attach a confidence interval — for 43 out of 70 it spans roughly 49% to 73%, which contains the base rate and therefore settles nothing.</p>
 
-  <p>A percentage is easy to admire, so I simulated actually trading it — fixed position size, every signal at the 0.6 setting, 327 trades across the test period. The result was effectively flat before costs, and clearly negative once realistic Indian brokerage and transaction taxes are applied to 327 round trips. I am not quoting the figure, because it does not beat doing nothing and I said I would only put numbers on results that clear that bar.</p>
+  <h2>Check 3: does it survive costs?</h2>
 
-  <p>That is the useful part. A precision score in isolation invites you to keep tuning. Money with costs attached tells you the edge is smaller than the friction — which is the only question that matters, and one an accuracy figure will never answer on its own.</p>
+  <p>A percentage invites you to keep tuning. Money does not. Simulating the strategy — fixed position size, every signal at the 0.6 setting, 327 trades across the test period — came out effectively flat before costs and clearly negative once realistic brokerage and transaction taxes are applied to 327 round trips.</p>
 
-  <h2>What I would do differently</h2>
+  <p>That is the check that ends the argument, and it generalises past finance: <strong>convert the metric into the unit the decision is actually made in.</strong> Cost per false positive, hours of review per alert, money per round trip. An edge smaller than the friction is not an edge, and no accuracy figure will ever tell you that on its own.</p>
 
-  <p><strong>Split the data three ways, not two.</strong> One slice to learn from, a second to make choices like the confidence level, and a third that is opened exactly once at the end. Every bit of tuning I did should have happened against data the final number never saw.</p>
+  <h2>What to do instead, in order</h2>
 
-  <p><strong>Judge on money from the start.</strong> Optimising for accuracy and checking the profit afterwards is backwards when a single round trip costs more than the edge. Had I scored each confidence level on net return instead, most of the range would have been visibly underwater from the first run.</p>
+  <p><strong>1. Quote the base rate first,</strong> computed on the test slice you are reporting.</p>
 
-  <p><strong>Test on many periods, not one.</strong> <a href="https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html" target="_blank" rel="noopener">TimeSeriesSplit</a> does this in about four lines. A single held-back window is one sample of one market mood. Sliding the train/test boundary forward through the data and reporting the spread of results across all those windows says far more than one number, and would have made the sample-size problem obvious straight away.</p>
+  <p><strong>2. Split three ways</strong> — train, validate, and a final set opened once. Every threshold, feature and hyperparameter decision belongs to the middle set.</p>
 
-  <p><strong>Match the test period to how often the model acts.</strong> If a setting only fires 70 times across the whole test window, the window is too short to judge it. Either use more data or restrict yourself to settings that produce enough decisions to measure.</p>
+  <p><strong>3. Score on the decision unit from the start.</strong> Optimising accuracy and checking profit afterwards is backwards when one round trip costs more than the edge. Scoring each confidence level on net return would have shown most of the range underwater on the first run.</p>
 
-  <p>The data pipeline underneath a negative result is still worth keeping: minute bars, a resumable backfill and a feature set are reusable whatever the model concludes. The ingestion pattern that makes repeated backfills safe is in <a href="/blog/building-resumable-etl-pipelines/">how to make an ETL pipeline safe to rerun</a>.</p>
+  <p><strong>4. Test on many periods, not one.</strong> <a href="https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html" target="_blank" rel="noopener">TimeSeriesSplit</a> does this in about four lines. A single held-back window is one sample of one market mood; sliding the boundary forward and reporting the spread across windows says far more than any single number, and would have made the sample-size problem obvious immediately.</p>
+
+  <p><strong>5. Match the test period to how often the model acts.</strong> If a setting fires 70 times across the whole window, the window is too short to judge it. Use more data, or restrict yourself to settings that produce enough decisions to measure.</p>
+
+  <p><strong>6. Publish the negative result.</strong> The pipeline underneath one is still worth keeping — minute bars, a resumable backfill and a feature set are reusable whatever the model concludes, and the ingestion pattern that makes repeated backfills safe is in <a href="/blog/building-resumable-etl-pipelines/">how to make an ETL pipeline safe to rerun</a>.</p>
 
   <h2>References and further reading</h2>
 
-  <p>Marcos López de Prado's <a href="https://www.wiley.com/en-us/Advances+in+Financial+Machine+Learning-p-9781119482086" target="_blank" rel="noopener">Advances in Financial Machine Learning</a> is the standard reference for testing models on financial data specifically, including the techniques for splitting time series so that overlapping windows cannot leak answers between the two halves. His chapters on how backtests mislead describe trap one almost exactly.</p>
+  <p>Marcos López de Prado's <a href="https://www.wiley.com/en-us/Advances+in+Financial+Machine+Learning-p-9781119482086" target="_blank" rel="noopener">Advances in Financial Machine Learning</a> is the standard reference for testing models on financial data specifically, including the techniques for splitting time series so that overlapping windows cannot leak answers between the two halves. His chapters on how backtests mislead describe check 1 above almost exactly.</p>
 
-  <p>Bailey, Borwein, López de Prado and Zhu's <a href="https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf" target="_blank" rel="noopener">The Probability of Backtest Overfitting</a> puts numbers on the thing I did by hand: try enough configurations against one held-out period and a good-looking result is the expected outcome rather than evidence. It is the paper to read if you have ever tuned a threshold while watching the score.</p>
+  <p>Bailey, Borwein, López de Prado and Zhu's <a href="https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf" target="_blank" rel="noopener">The Probability of Backtest Overfitting</a> puts numbers on the mistake in check 1: try enough configurations against one held-out period and a good-looking result is the expected outcome rather than evidence. It is the paper to read if you have ever tuned a threshold while watching the score.</p>
 
   <h3>The specific tools</h3>
 
@@ -283,7 +291,7 @@ Actual 1 count: 1451</code></pre>
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Test a Data Pipeline: What Tests Miss</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">92 tests passed while three features were broken. What to test instead, and the control run that comes first.</p>
+          <p class="post-card__excerpt">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
@@ -294,7 +302,7 @@ Actual 1 count: 1451</code></pre>
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
           <h3 class="post-card__title">Data Ingestion Bugs and How to Catch Them</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.</p>
+          <p class="post-card__excerpt">Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
@@ -305,7 +313,7 @@ Actual 1 count: 1451</code></pre>
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Scrape a Site That Paginates by Date</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.</p>
+          <p class="post-card__excerpt">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
         </div>
       </a>
     </div>

@@ -153,27 +153,29 @@
       <a class="share-btn" href="https://api.whatsapp.com/send?text=Why%20Your%20Scraper%20Gets%20Blocked%20and%20How%20to%20Fix%20It%20https%3A%2F%2Fvishnujan.dev%2Fblog%2Fwhy-scrapers-get-blocked%2F" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.5-1.2A9 9 0 1 0 12 3Zm0 1.7a7.3 7.3 0 1 1-3.7 13.6l-.3-.2-2.7.7.7-2.6-.2-.3A7.3 7.3 0 0 1 12 4.7Zm4.2 9.1c-.2-.1-1.3-.7-1.5-.7s-.4-.1-.5.1-.6.7-.7.9-.3.2-.5.1a6 6 0 0 1-1.8-1.1 6.6 6.6 0 0 1-1.2-1.6c-.1-.2 0-.4.1-.5l.4-.4a1.4 1.4 0 0 0 .2-.4.4.4 0 0 0 0-.4c0-.1-.5-1.3-.7-1.7s-.4-.4-.5-.4h-.4a.9.9 0 0 0-.6.3 2.6 2.6 0 0 0-.8 2 4.5 4.5 0 0 0 1 2.4 10.2 10.2 0 0 0 3.9 3.4c1.8.7 1.8.5 2.2.4a2.3 2.3 0 0 0 1.5-1.1 1.9 1.9 0 0 0 .1-1.1c0-.1-.2-.2-.4-.3Z"/></svg></a>
     </div>
     </div>
-    <p class="post-head__dek">Rotating user agents fixes almost nothing. The four layers that block you: IP, TLS, browser, behaviour.</p>
+    <p class="post-head__dek">Four layers block you: headers, TLS fingerprint, IP, behaviour. How to tell which one, and the fix for each.</p>
   </div>
   <figure class="post-hero">
     <img src="/images/blog/blocked-scraper.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>A scraper gets blocked in four different ways, and from the outside they look almost identical. A stock-data site started answering the collection script with <code>405 Method Not Allowed</code>. Nothing had changed on the client side. The advice you find first — rotate your user agent, add some headers — could not have worked, because the site was not reading the headers. It was looking at the shape of the encrypted connection itself, which is decided before a single header is sent.</p>
+  <p>A scraper gets blocked in four different ways, and from the outside they look almost identical. That is the whole difficulty: a fix aimed at the wrong layer does nothing at all, and the advice you find first — rotate your user agent, add some headers — only addresses one of the four.</p>
 
-  <p>Blocking is not one thing, and that is the whole difficulty. There are four separate layers at which a site can decide you are not welcome, they produce similar-looking failures, and a fix aimed at the wrong layer does nothing at all. This is each layer, what it looks like from the outside, and what actually stopped it in my own collection scripts.</p>
+  <p>Here is the case that makes the point. A stock-data site started answering a collection script with <code>405 Method Not Allowed</code>. Nothing had changed on the client side. Headers could not have been the fix, because the site was not reading the headers: it was looking at the shape of the encrypted connection itself, which is decided before a single header is sent.</p>
 
-  <h2>First, the thing that makes all of this hard to debug</h2>
+  <p>Below is each layer, how to tell from the outside that it is the one blocking you, and what actually clears it. Then the order to work through them in, cheapest first.</p>
 
-  <p>When that 405 started, my run reported success. It fetched, it caught the error, it logged it somewhere nobody was reading, and it finished with zero new rows — which is exactly what a quiet day looks like. The data simply stopped growing.</p>
+  <h2>Before anything: make the block visible</h2>
 
-  <p>Anything that can legitimately return nothing has to be able to tell <em>the source had nothing</em> apart from <em>I was prevented from finding out</em>. Before any of the fixes below, the change that mattered was an explicit pass/fail count printed at the end of every run, so a block shows up as a block. Three of the bugs in my <a href="/blog/a-year-of-ingestion-bugs/">common data ingestion bugs</a> were the same shape.</p>
+  <p>When that 405 started, the run reported success. It fetched, caught the error, logged it where nobody was reading, and finished with zero new rows — which is exactly what a quiet day looks like. The data simply stopped growing.</p>
+
+  <p><strong>Anything that can legitimately return nothing must be able to tell "the source had nothing" apart from "I was prevented from finding out."</strong> An explicit pass/fail count printed at the end of every run is the cheapest instrument in this whole post, and everything below is guesswork without it. Several of the failures in <a href="/blog/a-year-of-ingestion-bugs/">data ingestion bugs and how to catch them</a> are the same shape.</p>
 
   <h2>Layer 1 — what you say: headers</h2>
 
-  <p>Every HTTP request carries a set of labels: which browser you claim to be, what you will accept back, which page you came from. This is the layer everyone starts with, and it is the least likely to be your problem — but getting it wrong will block you on sites that block nothing else. ScrapeOps keeps a <a href="https://scrapeops.io/web-scraping-playbook/web-scraping-guide-header-user-agents/" target="_blank" rel="noopener">practical guide to header sets</a> that is more specific than most, if you want a checklist for this layer.</p>
+  <p>Every HTTP request carries labels: which browser you claim to be, what you will accept back, which page you came from. This is where everyone starts and it is the least likely to be your problem — but getting it wrong blocks you on sites that block nothing else.</p>
 
-  <p>The National Stock Exchange's data endpoints are the clearest example I have. They will not answer unless the request looks like it came from the page that normally calls them:</p>
+  <p>Data endpoints behind a public page are the clearest example. Many will not answer unless the request looks like it came from the page that normally calls them:</p>
 
   <pre><code>HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -182,31 +184,35 @@
     "Accept-Language": "en-US,en;q=0.9",
 }</code></pre>
 
-  <p>The <code>Referer</code> is the load-bearing line: it says which page sent you. Many sites also require that you visited the ordinary page first, because that visit is what issues the cookie the data endpoint checks. Nothing here is clever, and rotating through a list of fake user agents adds nothing on top — a site that checks headers checks whether they are coherent, not whether they are varied.</p>
+  <p>The <code>Referer</code> is the load-bearing line: it says which page sent you. Many sites additionally require that you visited the ordinary page first, because that visit is what issues the cookie the data endpoint checks — so hold a session and fetch the human page once before the endpoint.</p>
+
+  <p>What does <em>not</em> help: rotating through a list of fake user agents. A site that checks headers checks whether they are coherent, not whether they are varied. ScrapeOps keeps a <a href="https://scrapeops.io/web-scraping-playbook/web-scraping-guide-header-user-agents/" target="_blank" rel="noopener">practical guide to complete header sets</a> if you want a checklist for this layer.</p>
+
+  <p><strong>The tell:</strong> the request fails identically every time, from every machine and network, including from <code>curl</code>, and adding the referer or the cookie fixes it immediately.</p>
 
   <h2>Layer 2 — how you connect: the TLS fingerprint</h2>
 
-  <p>This is the layer that produced the 405, and the one most people have not heard of.</p>
+  <p>This is the layer that produced the 405, and the one most people have never heard of.</p>
 
-  <p>Before any HTTP request happens, your program and the server negotiate an encrypted connection. In that opening message your side lists which encryption methods it supports, in a particular order, with particular extensions. Python's networking library makes that list differently from Chrome. The pattern is stable enough to be summarised as a fingerprint. The common form is called <a href="https://github.com/salesforce/ja3" target="_blank" rel="noopener">JA3</a>, now largely superseded by <a href="https://github.com/FoxIO-LLC/ja4" target="_blank" rel="noopener">JA4</a> — and a bot-mitigation service can compare it against what a real Chrome produces before it has read one byte of your request. You can see your own in about two seconds: fetch <a href="https://tls.browserleaks.com/json" target="_blank" rel="noopener">tls.browserleaks.com/json</a> from your script and then from your browser, and compare the fingerprint fields.</p>
+  <p>Before any HTTP request happens, your program and the server negotiate an encrypted connection. In that opening message your side lists which encryption methods it supports, in a particular order, with particular extensions. Python's networking library builds that list differently from Chrome, and the pattern is stable enough to be summarised as a fingerprint — <a href="https://github.com/salesforce/ja3" target="_blank" rel="noopener">JA3</a>, now largely superseded by <a href="https://github.com/FoxIO-LLC/ja4" target="_blank" rel="noopener">JA4</a>. A bot-mitigation service compares it against what a real Chrome produces before it has read one byte of your request.</p>
 
-  <p>So a request claiming to be Chrome, whose handshake is Python's, is caught by a check that never looks at the claim. You cannot fix this with headers, and you cannot fix it by trying harder in the same library. What fixes it is making the handshake itself match:</p>
+  <p>So a request claiming to be Chrome whose handshake is Python's is caught by a check that never looks at the claim. No header fixes this, and neither does trying harder in the same library. What fixes it is making the handshake match:</p>
 
   <pre><code># curl_cffi impersonates a real browser's TLS/JA3 fingerprint, which is what
-# gets past Trendlyne's Cloudflare bot mitigation (plain `requests` gets 405'd).
+# gets past the site's Cloudflare bot mitigation (plain `requests` gets 405'd).
 from curl_cffi import requests as cffi_requests
 
 resp = cffi_requests.get(url, headers=HEADERS, impersonate="chrome131")</code></pre>
 
-  <p><a href="https://github.com/lexiforest/curl_cffi" target="_blank" rel="noopener"><code>curl_cffi</code></a> is a drop-in replacement for Python's <code>requests</code> that speaks through a TLS stack configured to match a named browser version. One import and one argument. The rest of the script was unchanged, and the endpoint started answering again.</p>
+  <p><a href="https://github.com/lexiforest/curl_cffi" target="_blank" rel="noopener"><code>curl_cffi</code></a> is a drop-in replacement for <code>requests</code> that speaks through a TLS stack configured to match a named browser version. One import and one argument; the rest of the script is unchanged. Outside Python, <a href="https://github.com/bogdanfinn/tls-client" target="_blank" rel="noopener">tls-client</a> is the Go equivalent, and the same technique underlies most commercial "unblocker" products.</p>
 
-  <p>How to tell this is your layer: the same URL works in your browser, often works from <code>curl</code> on the command line, and fails from your script with a status that has nothing to do with the request being malformed — <code>403</code>, <code>405</code>, or a challenge page. Getting a challenge page while a real browser on the same machine and network sails through is the tell. If you are not in Python, <a href="https://github.com/bogdanfinn/tls-client" target="_blank" rel="noopener">tls-client</a> is the equivalent for Go, and the same technique underlies most commercial "unblocker" products.</p>
+  <p><strong>The tell:</strong> the same URL works in your browser, often works from <code>curl</code>, and fails from your script with a status unrelated to the request being malformed — <code>403</code>, <code>405</code>, or a challenge page. Getting a challenge while a real browser on the same machine and network sails through is the giveaway. <strong>The two-second check:</strong> fetch <a href="https://tls.browserleaks.com/json" target="_blank" rel="noopener">tls.browserleaks.com/json</a> from your script, then open it in your browser, and compare the fingerprint fields. If they differ, this is your layer.</p>
 
   <h2>Layer 3 — where you connect from: the address</h2>
 
-  <p>Once your handshake and headers look right, the next thing a site has is your IP address. It knows two things about it: whether it belongs to a home connection or a data centre, and how it has behaved recently.</p>
+  <p>Once handshake and headers look right, the next thing a site has is your IP address. It knows two things about it: whether it belongs to a home connection or a data centre, and how it has behaved recently.</p>
 
-  <p>Both of my clearest blocks were at this layer. The insider-filings supplement, after enough requests, started getting Cloudflare's "confirm you are human" wall — served as ordinary-looking HTML with a 403, 405, 429 or 503 attached. Detecting it needs both signals, because the status alone is ambiguous and the page alone is just text:</p>
+  <p>Sustained collection eventually hits Cloudflare's "confirm you are human" wall, served as ordinary-looking HTML with a 403, 405, 429 or 503 attached. Detecting it needs both signals, because the status alone is ambiguous and the page alone is just text:</p>
 
   <pre><code>BLOCK_STATUS = {403, 405, 429, 503}
 CHALLENGE_MARKERS = ("cf-chl", "challenge-platform", "/cdn-cgi/challenge")
@@ -215,45 +221,43 @@ def looks_blocked(status_code, text=""):
     """True if a response is a Cloudflare block/challenge rather than real content."""
     return status_code in BLOCK_STATUS or any(m in text for m in CHALLENGE_MARKERS)</code></pre>
 
-  <p>The response to that is rotation: a pool of proxy addresses, with a fixed number of requests taken through each before moving on. A fresh batch is pulled and tested when the pool wears out. One working set of numbers: 10 requests per address, a pause of 30 to 90 seconds between batches of 20, and every candidate address validated against the real site before it is trusted. Free proxy lists are mostly dead entries, so the validation pass is not optional.</p>
+  <p>The response is rotation: a pool of addresses, a fixed number of requests through each before moving on, a fresh batch pulled and tested when the pool wears out. One working set of numbers: 10 requests per address, a 30-to-90-second pause between batches of 20, and every candidate address validated against the real site before it is trusted. Free proxy lists are mostly dead entries, so the validation pass is not optional.</p>
 
-  <p>Two honest caveats, because this is the layer where advice gets irresponsible. First, free proxies are unreliable, frequently slower than not scraping at all, and you have no idea who operates them, which makes them unfit for anything carrying credentials. Second, rotation treats a symptom. If a site blocks your address after 200 requests, the reason is usually the rate rather than the identity, and pacing the run is the fix that keeps working when rotation stops.</p>
+  <p>Two caveats, because this is where advice gets irresponsible. Free proxies are unreliable, frequently slower than not scraping at all, and operated by people you do not know, which makes them unfit for anything carrying credentials. And <strong>rotation treats a symptom</strong>: if a site blocks your address after 200 requests, the cause is usually the rate rather than the identity, and pacing is the fix that keeps working when rotation stops.</p>
 
-  <p>The other case is more interesting because rotation was not available. A book-catalogue app runs on a hosting provider and fetches pages from a retailer on demand. The retailer blocks data-centre addresses, which is every address the app has. Rotating within a data centre does not help when the data centre is the thing being scored. The change was to move the fetch to the one address the site had no reason to distrust — the visitor's own browser, which loads the page and hands the result back to the API. The trade-off is that the fetch now depends on a client being present, so it only works for an app that is scraping in response to a user action in the first place. The commit message is the summary: <em>scrape from the visitor's browser, because ours is the address being blocked</em>.</p>
+  <p>There is a second shape of this worth knowing, because rotation cannot solve it. An app hosted on a cloud provider that fetches pages from a retailer on demand is blocked at every address it has, because the retailer scores data-centre ranges as a class. Rotating within a data centre does not help when the data centre is the thing being scored. The fix was to move the fetch to the one address the site had no reason to distrust — the visitor's own browser, which loads the page and hands the result back to the API. The trade-off is that the fetch now needs a client present, so it only works where the scraping happens in response to a user action. If your blocked scraper is user-triggered, this is the move nobody suggests and it costs nothing.</p>
 
   <h2>Layer 4 — whether you look like a person</h2>
 
-  <p>Running a real browser gets you past the first two layers automatically, and introduces a fourth: automated browsers announce themselves. The most famous signal is a property the browser sets when it is being driven by a program, which is one line of JavaScript to read:</p>
+  <p>Running a real browser clears the first two layers automatically and introduces a fourth: automated browsers announce themselves. The most famous signal is a property the browser sets when it is being driven by a program, readable in one line of JavaScript:</p>
 
   <pre><code>Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
 Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});</code></pre>
 
-  <p>There are dozens more — screen size, available fonts, how the browser renders a test image, whether a headless build reports the same graphics driver as a real one. Libraries exist to patch the known set; I use <a href="https://github.com/AtuboDad/playwright_stealth" target="_blank" rel="noopener"><code>playwright-stealth</code></a> where I need it, and <a href="https://github.com/ultrafunkamsterdam/undetected-chromedriver" target="_blank" rel="noopener">undetected-chromedriver</a> is the Selenium equivalent. Treat that as raising the bar rather than clearing it: this is an arms race between people who publish patches and people who publish new checks, and the checks are updated more often.</p>
+  <p>There are dozens more — screen size, available fonts, how the browser renders a test image, whether a headless build reports the same graphics driver as a real one. <a href="https://github.com/AtuboDad/playwright_stealth" target="_blank" rel="noopener"><code>playwright-stealth</code></a> patches the known set, and <a href="https://github.com/ultrafunkamsterdam/undetected-chromedriver" target="_blank" rel="noopener">undetected-chromedriver</a> is the Selenium equivalent. Treat both as raising the bar rather than clearing it: this is an arms race between people publishing patches and people publishing new checks, and the checks are updated more often.</p>
 
-  <p>The other half of this layer is behaviour, and it is the half that actually decides. A real session has irregular gaps, does not request 400 pages in perfect 1.0-second intervals, and does not run at 03:00 for exactly the same duration every night. Jittered pauses and batch breaks cost almost nothing and remove the most obvious pattern you present.</p>
+  <p>The other half of this layer is behaviour, and it is the half that decides. A real session has irregular gaps, does not request 400 pages at perfect 1.0-second intervals, and does not run at 03:00 for exactly the same duration every night. Jittered pauses and batch breaks cost almost nothing and remove the most obvious pattern you present.</p>
 
-  <p>Where the strongest measures are needed — a couple of sources check hard — the answer is to stop hiding. Run the browser visibly rather than headless, log in once by hand, and save the session to a file so later runs start already authenticated. That is described in <a href="/blog/playwright-vs-selenium/">Playwright vs Selenium</a>.</p>
+  <p>Where a source checks hard, the answer is to stop hiding: run the browser visibly, log in once by hand, and save the session to a file so later runs start already authenticated. The mechanics of that are in <a href="/blog/playwright-vs-selenium/">Playwright vs Selenium</a>.</p>
 
-  <h2>The block that is not a block</h2>
+  <h2>Two failures that look like blocking and are not</h2>
 
-  <p>Two more failures look like blocking and are not.</p>
+  <p><strong>Rate limiting.</strong> A <code>429</code> usually means slow down and clears on its own. It is not a verdict on you, and responding by rotating addresses converts a two-minute pause into a real block. It also has more than one meaning, which is <a href="/blog/http-429-retry-logic/">its own post</a>.</p>
 
-  <p><strong>Rate limiting.</strong> A <code>429</code> usually means slow down, and it clears on its own. It is not a verdict on you, and responding to it by rotating addresses converts a two-minute pause into a real block. It also has more than one meaning, which is its own post: <a href="/blog/http-429-retry-logic/">what a 429 really means</a>.</p>
+  <p><strong>A cap you were never told about.</strong> Free tiers commonly truncate a response at a fixed row count — 200 is a popular one — with no error, no flag and no indication anything was withheld. A wide date window simply returns fewer records than it contains. Requesting one day at a time keeps every window under the cap. Nothing in the response will tell you; it is findable only by pulling the same range twice with different window sizes and noticing the totals disagree.</p>
 
-  <p><strong>A cap you were never told about.</strong> The same supplement source silently truncates any response at 200 rows for non-subscribers. No error, no flag, no indication that anything was withheld — a wide date window simply returns fewer records than it contains. The fix was to request one day at a time so no window can reach the cap. Nothing in the response would ever have told me; it was findable only by pulling a range twice with different window sizes and noticing the totals disagreed.</p>
-
-  <h2>The order I would work through it</h2>
+  <h2>The order to work through it</h2>
 
   <p>Cheapest first, because each step rules out a layer:</p>
 
-  <p><strong>1. Make the failure visible.</strong> Print how many requests succeeded and how many were refused. Everything below is guesswork until a block is distinguishable from a quiet day.</p>
+  <p><strong>1. Make the failure visible.</strong> Print how many requests succeeded and how many were refused.</p>
 
   <p><strong>2. Check whether you need the page at all.</strong> Open the browser's network tab and look for the endpoint the page itself calls. A JSON endpoint with the right <code>Referer</code> is less work to keep alive than a browser, and a smaller thing to be blocked for.</p>
 
   <p><strong>3. Fix the headers, once.</strong> Real user agent, correct <code>Referer</code>, visit the ordinary page first so you hold the cookie.</p>
 
-  <p><strong>4. Match the handshake</strong> with <code>curl_cffi</code> or equivalent, if you get challenge pages that a browser on the same machine does not.</p>
+  <p><strong>4. Match the handshake</strong> with <code>curl_cffi</code> or equivalent, if you get challenge pages a browser on the same machine does not.</p>
 
   <p><strong>5. Slow down before you rotate.</strong> Pacing fixes rate-based blocks permanently; rotation fixes them until the new address is scored too. Scrapy's <a href="https://docs.scrapy.org/en/latest/topics/autothrottle.html" target="_blank" rel="noopener">AutoThrottle</a> and <a href="https://crawlee.dev/python/" target="_blank" rel="noopener">Crawlee</a> both do this adaptively, which beats any fixed delay you will pick by hand.</p>
 
@@ -261,7 +265,7 @@ Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});</code><
 
   <h2>The part that is not technical</h2>
 
-  <p>All of the above is about whether a request succeeds, which is a different question from whether it should be made. What I hold to: public data only, never anything behind a paywall or another person's login, honour <a href="https://docs.python.org/3/library/urllib.robotparser.html" target="_blank" rel="noopener"><code>robots.txt</code></a> and the terms where they speak to this, keep the request rate low enough that nobody would notice the load, and identify honestly where a site offers a way to. Every rate limit and pause described here also exists for that reason, not only to stay unblocked. If a site offers an API or a bulk download, that is the correct route even when it costs money, and it will outlive any of these techniques.</p>
+  <p>All of the above is about whether a request succeeds, which is a different question from whether it should be made. A defensible line: public data only, never anything behind a paywall or another person's login; honour <a href="https://docs.python.org/3/library/urllib.robotparser.html" target="_blank" rel="noopener"><code>robots.txt</code></a> and the terms where they speak to this; keep the request rate low enough that nobody would notice the load; identify honestly where a site offers a way to. Every rate limit and pause described here exists for that reason too, not only to stay unblocked. If a site offers an API or a bulk download, that is the correct route even when it costs money — and it will outlive every technique in this post.</p>
 
   <h2>References and further reading</h2>
 
@@ -316,7 +320,7 @@ Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});</code><
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Test a Data Pipeline: What Tests Miss</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">92 tests passed while three features were broken. What to test instead, and the control run that comes first.</p>
+          <p class="post-card__excerpt">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
@@ -327,7 +331,7 @@ Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});</code><
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
           <h3 class="post-card__title">Data Ingestion Bugs and How to Catch Them</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.</p>
+          <p class="post-card__excerpt">Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
@@ -338,7 +342,7 @@ Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});</code><
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Scrape a Site That Paginates by Date</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.</p>
+          <p class="post-card__excerpt">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
         </div>
       </a>
     </div>

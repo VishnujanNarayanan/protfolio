@@ -153,21 +153,15 @@
       <a class="share-btn" href="https://api.whatsapp.com/send?text=Data%20Ingestion%20Bugs%20and%20How%20to%20Catch%20Them%20https%3A%2F%2Fvishnujan.dev%2Fblog%2Fa-year-of-ingestion-bugs%2F" target="_blank" rel="noopener" aria-label="Share on WhatsApp" title="Share on WhatsApp"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.7 13.6L3 21l4.5-1.2A9 9 0 1 0 12 3Zm0 1.7a7.3 7.3 0 1 1-3.7 13.6l-.3-.2-2.7.7.7-2.6-.2-.3A7.3 7.3 0 0 1 12 4.7Zm4.2 9.1c-.2-.1-1.3-.7-1.5-.7s-.4-.1-.5.1-.6.7-.7.9-.3.2-.5.1a6 6 0 0 1-1.8-1.1 6.6 6.6 0 0 1-1.2-1.6c-.1-.2 0-.4.1-.5l.4-.4a1.4 1.4 0 0 0 .2-.4.4.4 0 0 0 0-.4c0-.1-.5-1.3-.7-1.7s-.4-.4-.5-.4h-.4a.9.9 0 0 0-.6.3 2.6 2.6 0 0 0-.8 2 4.5 4.5 0 0 0 1 2.4 10.2 10.2 0 0 0 3.9 3.4c1.8.7 1.8.5 2.2.4a2.3 2.3 0 0 0 1.5-1.1 1.9 1.9 0 0 0 .1-1.1c0-.1-.2-.2-.4-.3Z"/></svg></a>
     </div>
     </div>
-    <p class="post-head__dek">About 30 bugs from a year of market-data pipelines, sorted by cause. Eight threw no error at all.</p>
+    <p class="post-head__dek">Five ways ingestion breaks, with the guard for each. Eight of about 30 bugs threw no error at all.</p>
   </div>
   <figure class="post-hero">
     <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>Data ingestion bugs rarely announce themselves. Over a year, about 30 needed fixing across 32 scripts that collect Indian market data — share prices, company announcements, insider filings and news. Eight produced no error message of any kind. The script finished, reported success, the file got bigger, and the data in it was wrong. That ratio is the only genuinely interesting thing here, and it is the reason the rest of this is worth reading.</p>
+  <p>Ingestion — the stage that gets data out of somebody else's system and into yours — fails in five ways, and only four of them tell you. The fifth writes wrong data into your store, reports success, and leaves no trace anywhere in the run.</p>
 
-  <p>If any of the terms below are new: these scripts are <em>ingestion</em>, which is the stage that gets data from somebody else's system into yours. Nothing in this post is specific to finance. A pipeline pulling orders from a payments provider fails in the same five ways.</p>
-
-  <p>I am writing it down because this kind of knowledge evaporates. Six months after a fix, all that survives is a vague sense that "the insider trades thing was awkward once", which helps nobody. A year of failures in one place also makes a pattern visible that is invisible one bug at a time.</p>
-
-  <h2>Data ingestion bugs, by cause</h2>
-
-  <p>Assigning each bug a single cause is approximate — the Cloudflare one below belongs in two categories, and I filed it under the one that took more work to resolve. With that caveat:</p>
+  <p>Here is the distribution, from about 30 bugs fixed over a year across 32 scheduled scripts that collect Indian market data: prices, company announcements, insider filings, news. Eight of the 30 produced no error message of any kind. The script finished, the file got bigger, and what was in it was wrong. Nothing below is specific to finance — a pipeline pulling orders from a payments provider breaks in the same five ways.</p>
 
   <figure class="fig">
     <svg viewBox="0 0 640 200" role="img" aria-label="Bar chart of about 30 ingestion bugs by cause: the source fighting back 9, silently wrong data 8, crashes and timeouts 5, environment and config 5, concurrency 3." class="fig__chart">
@@ -191,81 +185,93 @@
     </svg>
     <figcaption>Roughly 30 bugs, by primary cause. The second bar is the one that mattered.</figcaption>
   </figure>
+  <p>The distribution by file is lopsided in a way that is worth knowing before you start: two scripts account for 16 of the 30, and both are the ones that maintain long-lived local state between runs — a resume point, a file of accumulated history. Scripts that fetch a thing and write a file barely appear. <strong>Bugs live in state, not in requests.</strong> If you are deciding where to spend review effort, spend it wherever a run's output becomes the next run's input.</p>
 
-  <p>The distribution by file is lopsided in a way I didn't expect until I counted. Two scripts account for 16 of the 30: the one that downloads daily prices for around 1,600 listed companies (10 bugs), and the one that collects insider-trading disclosures (6). Both are the ones that maintain long-lived local state across runs. The scripts that just fetch a thing and write a file barely appear.</p>
+  <p>Each category below gets the failure, why it is invisible or not, and the guard that catches it.</p>
 
   <h2>1. Silently wrong data — 8 bugs</h2>
 
-  <p>Every one of these ran to completion and reported success. This is the category worth reading about; the other four are here for completeness.</p>
+  <p>Every one of these ran to completion and reported success. This is the category worth your attention; the other four mostly announce themselves.</p>
 
-  <h3>Deduplicating on columns that don't exist</h3>
+  <h3>A deduplication key with column names that do not exist</h3>
 
-  <p>The insider-disclosure script deduplicated incoming rows from <a href="https://www.nseindia.com/companies-listing/corporate-filings-insider-trading" target="_blank" rel="noopener">NSE's insider trading disclosures</a> on a composite key. The key was written from memory rather than from the response, so some of its columns did not exist in the data at all:</p>
+  <p>Deduplicating incoming rows on a composite key is standard. Write the key from memory instead of from an actual response and you get this:</p>
 
-  <pre><code># The key the pipeline actually used. None of these are NSE column
-# names, so every row got the same (missing) key and collapsed.
+  <pre><code># The key the pipeline used. None of these are real column
+# names in the response, so every row got the same (missing)
+# key and collapsed into one.
 DEDUP_KEYS = ["personName", "acqQty", "securityName"]
 
-# The columns NSE really returns.
+# The columns the source really returns.
 DEDUP_KEYS = ["acqName", "secAcq", "symbol", "date"]</code></pre>
 
-  <p>Pandas didn't complain in the way I needed it to. The effect was that every distinct trade for a symbol on a given day collapsed into one row — a company that filed four separate trades in a day came out of the pipeline with one. There is no error state here to detect. The pipeline was confidently discarding real filings for as long as that key was wrong, and nothing in the run would ever have told me.</p>
+  <p>Pandas does not complain in the way you need it to. The effect: every distinct record for a symbol on a given day collapsed into one row, so a company that filed four separate trades in a day came through as one. There is no error state to detect here. The pipeline discards real records for as long as the key is wrong.</p>
 
-  <h3>The dedup that added rows</h3>
+  <p><strong>The guard:</strong> assert your key columns exist before you use them — <code>set(DEDUP_KEYS) &lt;= set(df.columns)</code> is one line and turns a silent bug into a crash. Better, derive the key from a schema you validated the response against, so a renamed upstream column fails the load rather than the dedup.</p>
 
-  <p>Fixing the key surfaced a second bug underneath it. The dedup was implemented as a merge, and a merge against existing data that already contains duplicate keys doesn't dedup — it does a partial cartesian product and inflates the row count. So for a while the pipeline was dropping rows, and for a while after that it was adding rows that never existed. A set-membership anti-join fixed it, and it doesn't care what's already in the file, which the merge very much did.</p>
+  <h3>The deduplication that added rows</h3>
 
-  <p>If you're doing this with <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener"><code>DataFrame.merge</code></a>, the <code>validate="one_to_one"</code> argument raises on exactly this instead of quietly inflating. I didn't know it existed.</p>
+  <p>Fixing that key exposed a second bug underneath it. The dedup was implemented as a merge, and a merge against existing data that already contains duplicate keys does not deduplicate — it does a partial cartesian product and inflates the row count. So the pipeline dropped rows for a while, then added rows that never existed.</p>
 
-  <h3>Rows that are all NaN, made permanent</h3>
+  <p><strong>The guard:</strong> two of them. Use an anti-join — keep only the rows whose key is not already stored — because it does not care what is already in the file, which a merge very much does. And if you are using <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener"><code>DataFrame.merge</code></a>, pass <code>validate="one_to_one"</code>, which raises on exactly this instead of quietly inflating. It is the single highest-value argument in that API and almost nobody passes it.</p>
 
-  <p><a href="https://github.com/ranaroussi/yfinance" target="_blank" rel="noopener">yfinance</a> returns a bar all-or-nothing: if it's throttling you, or if you ask for today's unsettled bar, you get a row with a date and no prices. My loader wrote those rows. Then the resume logic did this:</p>
+  <h3>Empty rows that become the resume point</h3>
+
+  <p>Many APIs return a record all-or-nothing. <a href="https://github.com/ranaroussi/yfinance" target="_blank" rel="noopener">yfinance</a>, for example, hands back a row with a date and no prices when it is throttling you, or when you ask for a bar that has not settled yet. Write those rows, then resume from the newest date in the file, and the pipeline does this:</p>
 
   <pre><code># Before: any row can become the resume point, including one
-# that carries a date and no prices at all.
+# that carries a date and no values at all.
 start = pd.read_csv(path)["Date"].max()
 
-# After: only rows that actually carry a price count.
+# After: only rows that actually carry a value count.
 df = pd.read_csv(path)
 start = df[df["Close"].notna()]["Date"].max()</code></pre>
 
-  <p>With the first version, a blank row became the high-water mark and every real bar behind it got skipped for good. The gap-repair logic was the thing making the gap permanent. All-NaN frames are now treated as failed fetches rather than data, and existing blank rows get purged at startup.</p>
+  <p>With the first version a blank row becomes the high-water mark and every real record behind it is skipped permanently. The gap-repair logic is what makes the gap permanent.</p>
 
-  <h3>Filenames that depended on whether I was rate-limited</h3>
+  <p><strong>The guard:</strong> resume from the newest <em>valid</em> row, with "valid" defined explicitly per pipeline, and treat an all-empty response as a failed fetch rather than as data. Purge existing blank rows at startup, because they are still in there from before you knew.</p>
 
-  <p>Per-symbol files were named using the company name looked up at runtime. When the lookup succeeded you got <code>RELIANCE_Reliance Industries.csv</code>; when it was rate-limited and fell back to the bare symbol you got a different filename; when a company got renamed upstream you got a third. Each new filename was an empty file as far as the resume logic was concerned, so it re-downloaded twenty years of history into it. I had symbols sitting in three files with three overlapping partial copies of the same series. Filenames are now stable — reuse any existing <code>SYMBOL_*.csv</code> — plus a consolidation pass at startup that merges duplicates into one canonical file, taking the union of rows and preferring the copy with a valid Close.</p>
+  <h3>Filenames that depend on whether you were rate-limited</h3>
 
-  <h3>A blocked run that looked like a successful one</h3>
+  <p>Naming per-item files from a value looked up at runtime — a company name, a title, a slug — means the name changes when the lookup fails and falls back, and again when the upstream value is renamed. Each new filename is an empty file as far as resume logic is concerned, so it re-downloads the entire history into it. The end state was symbols sitting in three files with three overlapping partial copies of the same series.</p>
 
-  <p>Trendlyne, a stock-data site used to fill gaps in the price history, started returning Cloudflare 405s to plain <code>requests</code>. The step that fetches those gap-fills caught the failure and logged it somewhere nobody was reading. The run then reported success with zero rows added. Zero new rows is also exactly what a quiet day looks like, so from the outside the two are indistinguishable. The four layers a block can come from, and how to tell them apart, are in <a href="/blog/why-scrapers-get-blocked/">why your scraper gets blocked</a>. I switched the fetch to <a href="https://pypi.org/project/curl-cffi/" target="_blank" rel="noopener">curl_cffi</a> with Chrome impersonation, which gets you a matching TLS fingerprint rather than just a matching user agent. The part of that fix I actually care about is the pass/fail summary printed at the end, so a fully-blocked run can't be mistaken for a quiet one.</p>
+  <p><strong>The guard:</strong> file names come from the stable identifier only, never from a looked-up label. Add a startup consolidation pass that merges any existing duplicates into one canonical file, taking the union of rows and preferring the copy with valid values — you will need it for the mess already on disk.</p>
 
-  <h3>The 200-row window</h3>
+  <h3>A blocked run that looks like a successful one</h3>
 
-  <p>Trendlyne's free tier caps a response at 200 rows. Ask for a 30-day window over a busy period and you get 200 rows and no indication you were truncated. I'd been fetching in wide windows because it was fewer requests; it now chunks one day at a time by default. This is the one I worry about most when scraping. There's no error and no truncation flag anywhere in the response — you get 200 rows and you have to already know that 200 is the cap.</p>
+  <p>A site started returning Cloudflare <code>405</code>s to plain <code>requests</code>. The step that fetched from it caught the failure, logged it where nobody was reading, and the run reported success with zero rows added. Zero new rows is also exactly what a quiet day looks like, so from the outside those are indistinguishable.</p>
+
+  <p><strong>The guard:</strong> a pass/fail summary printed at the end of every run — attempted, succeeded, failed, per source. It is crude and it is the single highest-yield line of code in this whole post. For the block itself, <a href="https://pypi.org/project/curl-cffi/" target="_blank" rel="noopener">curl_cffi</a> with Chrome impersonation gets you a matching TLS fingerprint rather than just a matching user agent; the four layers a block can come from, and how to tell them apart, are in <a href="/blog/why-scrapers-get-blocked/">why your scraper gets blocked</a>.</p>
+
+  <h3>The silent result cap</h3>
+
+  <p>Free tiers commonly cap a response at N rows. One source here caps at 200. Ask for a 30-day window over a busy period and you get 200 rows and no indication whatsoever that you were truncated — no error, no flag, no <code>has_more</code>. You have to already know that 200 is the cap.</p>
+
+  <p><strong>The guard:</strong> if a response comes back at exactly the round number you suspect is the cap, treat it as truncated and split the window. Narrow windows cost more requests and are worth it; this pipeline now chunks one day at a time by default. This is the failure I would look for first in anybody else's scraper.</p>
 
   <h3>Future-dated rows</h3>
 
-  <p>Occasionally the source hands back a record dated ahead of today. Left alone it poisons the resume point for the entire symbol — the pipeline now believes it has data through 2027 and stops fetching. Guarded at ingest, same as the blank rows.</p>
+  <p>Sources occasionally hand back a record dated ahead of today. Left alone it poisons the resume point for that item forever — the pipeline believes it has data through 2027 and stops fetching. <strong>The guard:</strong> reject anything dated after now at ingest, in the same place you reject the blank rows.</p>
 
   <h2>2. The source fighting back — 9 bugs</h2>
 
-  <p>The largest category by count and the least interesting, because every one of these announced itself. 403s from <a href="https://scrapy.org/" target="_blank" rel="noopener">Scrapy</a>, until rotating user agents and slowing the request rate fixed it. <a href="https://docs.scrapy.org/en/latest/topics/autothrottle.html" target="_blank" rel="noopener">AutoThrottle</a> does most of that work and is the right default. Custom middleware came first here; the built-in setting has done the job since. A Playwright browser that crashed until I ran it headless. Twitter rate-limiting hard enough that the scraper needed seven cycles of three-minute waits on a fresh page, twelve-minute waits mid-scroll, and per-handle re-auth. Cloudflare, twice. Eventually a proxy pool with rotation, because a single IP wasn't going to finish a full crawl.</p>
+  <p>The largest category by count and the least interesting, because every one of them announced itself: 403s from <a href="https://scrapy.org/" target="_blank" rel="noopener">Scrapy</a> until the user agent rotated and the request rate dropped; a browser that crashed until it ran headless; a social platform rate-limiting hard enough to need seven cycles of three-minute waits on a fresh page, twelve-minute waits mid-scroll, and per-handle re-authentication; Cloudflare twice; eventually a rotating proxy pool, because one address was never going to finish a full crawl.</p>
 
-  <p>The useful thing to come out of this category is not any individual fix. It is the adaptive worker pool in the price script. It starts at five concurrent workers, drops one on any API or rate-limit error, and adds one back after fifteen consecutive clean calls. It means most of these stopped happening rather than each needing to be handled. That pattern is described in <a href="/blog/building-resumable-etl-pipelines/">how to make an ETL pipeline safe to rerun</a>.</p>
+  <p>The useful outcome is not any individual fix, it is the thing that made most of them stop happening: <strong>an adaptive worker pool.</strong> Start at five concurrent workers, drop one on any rate-limit or API error, add one back after fifteen consecutive clean calls. It finds the source's tolerance on its own and re-finds it when the source changes its mind. <a href="https://docs.scrapy.org/en/latest/topics/autothrottle.html" target="_blank" rel="noopener">Scrapy's AutoThrottle</a> is the same idea as a built-in setting and is the right default if you are already in Scrapy. The hand-rolled version is about twenty lines, and it is described with the rest of the rerun-safety design in <a href="/blog/building-resumable-etl-pipelines/">how to make an ETL pipeline safe to rerun</a>.</p>
 
   <h2>3. Crashes and timeouts — 5 bugs</h2>
 
-  <p>Unhandled exceptions in thread workers that killed a whole run's worth of progress, and a downloader with no timeout at all that would hang indefinitely on a stalled connection. It now runs with three retries, a ten-second timeout and exponential backoff, and workers return a result object rather than raising into the pool. Nothing clever here — these are the bugs you fix once and stop thinking about.</p>
+  <p>Unhandled exceptions in thread workers that killed a whole run's progress, and a downloader with no timeout at all that hung indefinitely on a stalled connection. Two rules fix the category and neither is clever: <strong>every network call gets an explicit timeout</strong> (there is no useful default; without one a stalled TCP connection hangs until the OS gives up, which can be hours), and <strong>worker functions return a result object rather than raising into the pool</strong>, so one bad item cannot take the run with it. Three retries, a ten-second timeout, exponential backoff. These are the bugs you fix once and stop thinking about.</p>
 
   <h2>4. Environment and config — 5 bugs</h2>
 
-  <p>Hardcoded output directories, three separate times, each one discovered by running the pipeline somewhere other than my machine. A script that broke because I renamed <code>scripts/</code> to <code>Scripts/</code> when I moved the project, which is a bug that only exists on case-sensitive filesystems and therefore only appeared on the machine that mattered. Output paths are arguments now.</p>
+  <p>Hardcoded output directories, three separate times, each discovered by running the pipeline somewhere other than the machine it was written on. A script that broke when <code>scripts/</code> was renamed to <code>Scripts/</code> — a bug that only exists on case-sensitive filesystems and therefore only appears on the server.</p>
 
-  <p>Individually these are dull. Collectively they are a sixth of the total, a proportion you only see by counting. Every one has the same root cause: a value that belongs to the environment, written into the code instead of passed into it.</p>
+  <p>Individually dull; collectively a sixth of the total, a proportion you only see by counting. Every one has the same root cause: <strong>a value that belongs to the environment, written into the code instead of passed into it.</strong> Paths, credentials, base URLs and worker counts are arguments. The cheap test that catches all of them at once is running the thing in a fresh clone in a container.</p>
 
   <h2>5. Concurrency — 3 bugs</h2>
 
-  <p>All three are one bug, approached three times. Every worker thread appended its result to a shared <code>combined.csv</code> by reading the file, concatenating, deduping and writing it back:</p>
+  <p>All three are one bug approached three times. Every worker thread appended its result to a shared file by reading it, concatenating, deduplicating and writing it back:</p>
 
   <pre><code># Before: every worker reads, merges and rewrites the whole file.
 with combined_file_lock:
@@ -280,30 +286,32 @@ frames = [f.result().df for f in as_completed(futures)]
    .drop_duplicates(["Date", "Symbol"], keep="last")
    .to_csv(combined_path, index=False))</code></pre>
 
-  <p>The lock stopped two threads writing at the same instant, which is not the same as making this correct. Writing a file in place is not atomic: the correct shape is to write a temporary file and <a href="https://lwn.net/Articles/457667/" target="_blank" rel="noopener">rename it over the original</a>, which is the one filesystem operation that either happens or does not. The whole read-modify-write cycle was still redoing an enormous amount of work, and an interruption mid-write left a truncated file that the next thread would read as the complete dataset and then write back. It took three passes in one day to settle. That is a fair indicator of where the problem really was: in the design, not in the lock. The first two attempts made the write safer without changing the fact that every worker was rewriting the whole file.</p>
+  <p>The lock stopped two threads writing at the same instant, which is not the same as making this correct. Writing a file in place is not atomic: an interruption mid-write leaves a truncated file that the next thread reads as the complete dataset and writes back. The correct shape is to write a temporary file and <a href="https://lwn.net/Articles/457667/" target="_blank" rel="noopener">rename it over the original</a>, which is the one filesystem operation that either happens or does not.</p>
 
-  <h2>What I'd do differently</h2>
+  <p><strong>The guard, stated generally: one writer.</strong> Workers produce values and return them; a single thread commits, once, atomically. Three passes in a day went into making the write safer without changing the fact that every worker was rewriting the whole file, which is a fair indicator of where the problem was.</p>
 
-  <p>The obvious conclusion — write more tests — is one everybody already agrees with and nobody acts on. It is also not quite the right conclusion: a passing test suite is evidence about the code and not about the data, which is covered separately in <a href="/blog/how-to-test-a-data-pipeline/">how to test a data pipeline</a>. So here are the two narrower things that would actually have helped.</p>
+  <h2>The two habits that would have caught most of this</h2>
 
-  <p><strong>An empty result and a blocked result are different, and the pipeline has to say which one it got.</strong> Three of the eight silent bugs are really the same bug. Cloudflare blocked me, or the window truncated at 200 rows, or the dedup key deleted everything — and in all three cases the output was "zero new rows," which is also what a quiet Tuesday looks like. Anything that can return nothing needs to distinguish "the source had nothing" from "I was prevented from finding out." A pass/fail summary at the end of a run is a crude instrument and it caught two of these.</p>
+  <p>"Write more tests" is the conclusion everybody agrees with and nobody acts on, and it is not quite right anyway: a passing suite is evidence about the code, not about the data (that argument is <a href="/blog/how-to-test-a-data-pipeline/">its own post</a>). Two narrower habits would have caught more.</p>
 
-  <p><strong>Don't let the data be its own checkpoint unless you validate it first.</strong> Resuming from the newest row in the file is a genuinely good pattern and I still use it — an interrupted run needs no separate state. But any bad row you write becomes the instruction for where to start next time, and two of the eight silent bugs are exactly that. Resume from the newest <em>valid</em> row, where "valid" is defined explicitly per pipeline. If you'd rather not hand-roll the check, <a href="https://pandera.readthedocs.io/" target="_blank" rel="noopener">pandera</a> lets you declare the schema and column constraints and fail the load instead of writing the row, and <a href="https://greatexpectations.io/expectations/" target="_blank" rel="noopener">Great Expectations</a> has a ready-made vocabulary for the same checks. I'm not using it yet; I probably should be.</p>
+  <p><strong>An empty result and a blocked result are different, and the run has to say which one it got.</strong> Three of the eight silent bugs are really one bug: blocked by Cloudflare, truncated at 200 rows, or emptied by a broken dedup key — and in all three cases the output was "zero new rows", which is also what a quiet Tuesday looks like. Anything that can return nothing must distinguish "the source had nothing" from "I was prevented from finding out".</p>
 
-  <p>The thing I haven't done, and should, is measure how long each of these was live before I caught it. The loud ones are easy: they were fixed within hours of appearing, because they appeared. For the silent ones I genuinely don't know, and that's the point — nothing in the setup records when a bug started, only when I got around to fixing it.</p>
+  <p><strong>Do not let the data be its own checkpoint unless you validate it first.</strong> Resuming from the newest row in the file is a genuinely good pattern — an interrupted run needs no separate state store. But any bad row you write becomes the instruction for where to start next time, and two of the eight silent bugs are exactly that. If you would rather not hand-roll the validity check, <a href="https://pandera.readthedocs.io/" target="_blank" rel="noopener">pandera</a> lets you declare the schema and column constraints and fail the load instead of writing the row, and <a href="https://greatexpectations.io/expectations/" target="_blank" rel="noopener">Great Expectations</a> has a ready-made vocabulary for the same checks.</p>
+
+  <p>What none of this gives you is a way to find silent bugs that are live right now. The only mechanism I know of that would is re-fetching data you already have on a schedule and diffing it against itself — which is the next thing worth building, and which I expect will find things I will not enjoy.</p>
 
   <h2>Caveats on the count</h2>
 
-  <p>"About 30" is doing some work in that sentence, and I'd rather state the ways it's soft than have you assume I didn't notice.</p>
+  <p>"About 30" is doing some work in that sentence, and the ways it is soft are worth stating.</p>
 
   <ul>
-    <li>Small bugs I fixed while doing something else don't appear at all, so 30 is an undercount. My guess is the real number is meaningfully higher, but I have no way to estimate by how much.</li>
-    <li>The three concurrency entries are one bug I got wrong twice, and two of the price-script entries are similar. Counting those as one each moves the totals around by a few.</li>
-    <li>Classification is a judgment made after the fact, which biases it toward the story already in place when the counting started. The silent-versus-loud split is stark enough that I don't think this changes the conclusion, but it would easily move a category boundary by two or three.</li>
-    <li>Most importantly, this counts bugs I <em>found</em>. The whole argument here is that a class of bug exists that produces no signal, which means the honest position is that I have no idea how many are in there right now.</li>
+    <li>Small bugs fixed while doing something else do not appear, so 30 is an undercount by an unknown amount.</li>
+    <li>The three concurrency entries are one bug got wrong twice. Counting those as one moves the totals around by a few.</li>
+    <li>Classification after the fact biases toward the story already in place. The silent-versus-loud split is stark enough to survive that, but a category boundary could easily move by two or three.</li>
+    <li>Most importantly, this counts bugs that were <em>found</em>. The whole argument is that a class of bug produces no signal, so the honest position is that nobody knows how many are in there now.</li>
   </ul>
 
-  <p>Which is roughly where I've landed: the loud failures are a solved problem and mostly handle themselves now, and the silent ones I catch by luck. Closing that gap probably means re-fetching data I already have and diffing it against itself on a schedule, which is the next thing I want to build, and which I suspect will find things I won't enjoy. The dedup problems are covered in more detail in <a href="/blog/how-i-scraped-nse-insider-filings/">how to scrape a site that paginates by date</a>.</p>
+  <p>The scripts behind the numbers are a private market-data collection stack; the failure modes, the guards and the code above are the parts that transfer, and the dedup case is worked through in detail in <a href="/blog/how-i-scraped-nse-insider-filings/">how to scrape a site that paginates by date</a>.</p>
 
   <h2>References and further reading</h2>
 
@@ -358,7 +366,7 @@ frames = [f.result().df for f in as_completed(futures)]
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Test a Data Pipeline: What Tests Miss</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">92 tests passed while three features were broken. What to test instead, and the control run that comes first.</p>
+          <p class="post-card__excerpt">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
@@ -369,7 +377,7 @@ frames = [f.result().df for f in as_completed(futures)]
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
           <h3 class="post-card__title">How to Scrape a Site That Paginates by Date</h3>
           <div class="byline"><span class="byline__date">August 2026</span></div>
-          <p class="post-card__excerpt">The endpoint returns 180 days at a time and the data changes after publication. Windowing, dedup, and what broke.</p>
+          <p class="post-card__excerpt">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
         </div>
       </a>
       <a class="post-card post-card--sm" href="/blog/local-llm-vs-api/">
@@ -380,7 +388,7 @@ frames = [f.result().df for f in as_completed(futures)]
           <div class="tag-row"><span class="tag">LLMs</span><span class="tag">Infrastructure</span></div>
           <h3 class="post-card__title">Local LLM vs API: When to Run Your Own Model</h3>
           <div class="byline"><span class="byline__date">July 2026</span></div>
-          <p class="post-card__excerpt">A 7B model on a 6GB GPU against a hosted 70B: 6s vs 1.6s, no daily cap, and which one to reach for.</p>
+          <p class="post-card__excerpt">What fits in 6GB, what it costs in latency, and the schema trick that makes a small model usable.</p>
         </div>
       </a>
     </div>
