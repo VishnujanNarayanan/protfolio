@@ -3071,6 +3071,17 @@ function makeTypeIn(host, runs, opts) {
     }
     var panEl = projEl.querySelector(".term-cards-pan");
     var viewEl = projEl.querySelector(".term-cards-view");
+    var sideEl = projEl.querySelector(".term-side");
+    // How much further down the card content runs than the filter panel's box. The
+    // panel holds still for exactly this much of the pan — the stretch where there are
+    // still rows below the fold — and then travels with the cards, so the last row and
+    // the foot of the panel leave the viewport together instead of the panel sitting
+    // there alone under a finished grid. A layout read, so it is measured with the rest
+    // of the geometry rather than per frame.
+    var sideLead = 0;
+    function measureSideLead() {
+      sideLead = sideEl ? Math.max(0, panEl.scrollHeight - sideEl.offsetHeight) : 0;
+    }
 
     // Stagger the card pop-in along the anti-diagonal (row+col): the top-left card
     // goes first, then each diagonal "wave" toward the bottom-right corner. Column
@@ -3665,6 +3676,7 @@ function makeTypeIn(host, runs, opts) {
     // → overflow 0 → height 100vh → no extra pin, so you scroll on out of the section
     // normally (no fixed dead-zone). Recomputed on init, resize, and every filter change.
     function sizeSection() {
+      measureSideLead();                                 // same triggers as the pin length
       var prevH = sec.style.height;
       if (window.innerWidth <= 820) { sec.style.height = ""; }         // mobile: natural flow
       else sec.style.height = (window.innerHeight + cardOverflow()) + "px";
@@ -3762,14 +3774,21 @@ function makeTypeIn(host, runs, opts) {
     // Map the pinned scroll to a vertical PAN of the cards layer inside its clipped
     // viewport. Because sizeSection() made the pin length == the overflow, the last card
     // lands exactly as the pin releases to Skills. The side panel doesn't move.
+    // Written to `translate`, NOT `transform`: .term-side carries the .9s reveal
+    // transition on `transform`, so folding the pan into it would re-trigger that
+    // easing every scroll frame. `translate` has no transition and composes with it.
+    function panSide(px) {
+      if (!sideEl) return;
+      sideEl.style.translate = px ? "0 " + (-px).toFixed(1) + "px" : "";
+    }
     function panCards() {
-      if (window.innerWidth <= 820) { panEl.style.transform = ""; clearColumnOffset(); return; }
+      if (window.innerWidth <= 820) { panEl.style.transform = ""; panSide(0); clearColumnOffset(); return; }
       var pinScroll = secH - window.innerHeight;            // == cardOverflow() (cached; was sec.offsetHeight)
       applyColumnOffset(colOffsetProgress());
       // momOff (≥0) coasts the cards DOWN then eases to 0 — the reveal's momentum carry.
       // `|| 0`: layoutCardStagger() calls this during setup, before momOff is assigned.
       var mom = momOff || 0;
-      if (pinScroll <= 0) { panEl.style.transform = "translateY(" + mom.toFixed(1) + "px)"; return; }
+      if (pinScroll <= 0) { panEl.style.transform = "translateY(" + mom.toFixed(1) + "px)"; panSide(0); return; }
       // The pan's zero point is ALIGN_EPS past the cover line, not on it. The filter's
       // realign deliberately parks the page 2px past that line (so the nav reel, which
       // flips dark on featuresEl.top ≤ 0, doesn't jitter to light on the boundary) — and
@@ -3779,7 +3798,9 @@ function makeTypeIn(host, runs, opts) {
       var travel = -secTop() - ALIGN_EPS;
       var range = Math.max(1, pinScroll - ALIGN_EPS);
       var past = Math.min(1, Math.max(0, travel / range));
-      panEl.style.transform = "translateY(" + (-(past * range) + mom).toFixed(1) + "px)";
+      var cardPan = past * range;
+      panEl.style.transform = "translateY(" + (-cardPan + mom).toFixed(1) + "px)";
+      panSide(Math.max(0, cardPan - sideLead));
     }
     function update() {
       raf = 0;

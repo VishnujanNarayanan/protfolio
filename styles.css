@@ -751,7 +751,10 @@ header.is-hero .header__nav-left a .nav-char__c,header.is-hero .pill-char__c{col
 /* Projects result = a side panel (LEFT, flush to the terminal's left edge) + cards grid.
    The panel breaks out of the body's 34px left padding (margin-left:-34px) so it starts
    right at the border with no gap; the grid keeps a gap after it. */
-.term-pgrid{flex:1 1 auto;min-height:0;display:flex;gap:28px;align-items:stretch;padding-top:44px;margin-left:-34px}
+/* overflow:hidden so the filter panel hard-cuts at the top edge once it starts
+   travelling with the last card row, rather than riding up over the SELECT line.
+   Same reason .term-cards-view clips the grid. */
+.term-pgrid{flex:1 1 auto;min-height:0;display:flex;gap:28px;align-items:stretch;padding-top:44px;margin-left:-34px;overflow:hidden}
 .term-projects{flex:1 1 auto;min-width:0;display:grid;grid-template-columns:repeat(4,1fr);gap:18px;align-content:start;align-items:start}
 /* Panel appears with the SAME rise+fade as the cards (Lando reveal), keyed off the
    LATCHED .is-revealing class (same as the cards) so once it appears it STAYS — it
@@ -767,7 +770,7 @@ header.is-hero .header__nav-left a .nav-char__c,header.is-hero .pill-char__c{col
 .term-side::-webkit-scrollbar-thumb{background:rgba(124,208,255,.35);border-radius:8px;border:2px solid transparent;background-clip:content-box}
 .term-side::-webkit-scrollbar-thumb:hover{background:rgba(124,208,255,.55);background-clip:content-box}
 @media (max-width:1100px){.term-side{flex-basis:clamp(190px,26vw,290px)}}
-@media (max-width:820px){.term-pgrid{flex-direction:column;margin-left:-18px;margin-right:-18px}.term-side{flex:0 0 auto;width:100%;min-height:0;max-height:none;overflow:visible;border-left:1px solid rgba(124,208,255,.22);border-radius:0}}
+@media (max-width:820px){.term-pgrid{flex-direction:column;margin-left:-18px;margin-right:-18px;overflow:visible}.term-side{flex:0 0 auto;width:100%;min-height:0;max-height:none;overflow:visible;translate:none;border-left:1px solid rgba(124,208,255,.22);border-radius:0}}
 /* hidden by the side-panel filter */
 .proj-card.is-filtered-out{display:none}
 /* ---- "Filter by" facet panel ---- */
