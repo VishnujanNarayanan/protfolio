@@ -1416,7 +1416,8 @@ header.is-hero .header__nav-left a .nav-char__c,header.is-hero .pill-char__c{col
 .flow-panel__cards .proj-card{aspect-ratio:1/1;width:100%;overflow:visible}
 .flow-panel__cards .proj-card::after{content:"";position:absolute;inset:0;z-index:11;pointer-events:none;border:2px solid rgba(124,208,255,.26);border-radius:1.843%;transition:border-color .4s ease,border-radius .45s cubic-bezier(.19,1,.22,1)}
 .flow-pcard .proj-card__media{clip-path:none;border-radius:1.843%;overflow:hidden;transition:border-radius .45s cubic-bezier(.19,1,.22,1)}
-/* Blog cards have no photo — an indigo→blue gradient face instead of an <img>. */
+/* Fallback face for a blog card with no cover in partials/posts.json. Covers come
+   from window.__BLOG_MEDIA and render as a normal .proj-card__img. */
 .flow-panel__cards .proj-card__shot{position:absolute;inset:0;background:linear-gradient(150deg,#222a6b,#3f6fd8)}
 /* Class-driven activation = the same look as a :hover, so text-hover and card-hover
    both light the card up: zoom/darken the image, wipe the reveal open, blue border. */
