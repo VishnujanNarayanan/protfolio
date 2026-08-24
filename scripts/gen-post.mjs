@@ -379,6 +379,37 @@ function escapeRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
   else console.log("unchanged blog/index.html");
 }
 
+// Publish slug -> cover image for the flow section.
+//
+// The flow cards used to render blog entries as a flat gradient because flow.js had
+// no way to find a post's image: CARD_DATA carries only a name, a dek and an href.
+// Emitting the map here means the picture is resolved from the href at render time,
+// so swapping which post appears in a zone — a one-line edit in CARD_DATA — brings
+// its cover with it. Same reasoning as window.__PROJECT_MEDIA in main.js: the media
+// belongs to the manifest, not to the surface displaying it.
+function blogMedia() {
+  const map = {};
+  for (const p of ordered) map[`/blog/${p.slug}/`] = p.image;
+  return `<script>window.__BLOG_MEDIA=${JSON.stringify(map)};</script>`;
+}
+
+// Splice that map into index.html, ahead of the deferred scripts that read it.
+{
+  const file = resolve(root, "index.html");
+  const begin = "<!-- BEGIN generated: blog media (source: partials/posts.json — run scripts/gen-post.mjs) -->";
+  const end = "<!-- END generated: blog media -->";
+  const before = readFileSync(file, "utf8");
+  const rendered = `${begin}\n${blogMedia()}\n${end}`;
+  let html;
+  if (before.includes(begin)) {
+    html = before.replace(new RegExp(escapeRe(begin) + "[\\s\\S]*?" + escapeRe(end)), () => rendered);
+  } else {
+    html = before.replace(/(\n<script src="main\.js" defer><\/script>)/, (_m, a) => `\n${rendered}${a}`);
+  }
+  if (html !== before) { writeFileSync(file, html); written++; console.log("wrote index.html (blog media)"); }
+  else console.log("unchanged index.html (blog media)");
+}
+
 // Splice the homepage panels into index.html.
 {
   const file = resolve(root, "index.html");

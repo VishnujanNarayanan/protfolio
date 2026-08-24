@@ -611,7 +611,11 @@
     "Fraud Detection": "Fraud Transaction Detection"
   };
   function mediaFor(c) {
-    if (c.k === "b") return { img: null, video: null };          // blog cards have no photo
+    // Blog cards resolve their cover from window.__BLOG_MEDIA, which gen-post.mjs
+    // emits from partials/posts.json keyed by href. Changing which post a zone shows
+    // is a one-line CARD_DATA edit and the picture follows. Posts with no cover fall
+    // back to the gradient face below.
+    if (c.k === "b") return { img: (window.__BLOG_MEDIA || {})[c.href] || null, video: null };
     var reg = window.__PROJECT_MEDIA || {};
     var m = reg[MEDIA_ALIAS[c.n] || c.n];
     return {
@@ -651,7 +655,9 @@
     // the card is the active one. preload="none" keeps it off the wire until then.
     var mv = mediaFor(c);
     var face = c.k === "b"
-      ? '<span class="proj-card__shot" aria-hidden="true"></span>'
+      ? (mv.img
+          ? '<img class="proj-card__img" src="' + mv.img + '" alt="" loading="lazy" decoding="async">'
+          : '<span class="proj-card__shot" aria-hidden="true"></span>')
       : mv.video
         ? '<video class="proj-card__img proj-card__video" src="' + mv.video + '" poster="' + mv.img +
           '" muted loop playsinline preload="none" aria-hidden="true"></video>'
