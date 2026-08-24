@@ -103,8 +103,8 @@
       "Data engineering"
     ],
     "published": "2026-08-04",
-    "image": "/images/blog/scraping.jpg",
-    "share": "/images/blog/share-scraping.jpg"
+    "image": "/images/blog/pagination.jpg",
+    "share": "/images/blog/share-pagination.jpg"
   },
   {
     "slug": "building-resumable-etl-pipelines",
