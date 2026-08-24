@@ -156,97 +156,83 @@
     <p class="post-head__dek">A rerun should repair data, not corrupt it. Four ways that rule breaks, and a six-point checklist.</p>
   </div>
   <figure class="post-hero">
-    <img src="/images/blog/resumable-etl.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
+    <img src="/images/blog/resumable-etl.jpg" alt="" width="1000" height="1000" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>A pipeline is safe to rerun when running it twice leaves the data no worse than running it once. Say it as a rule you can hold code to: <strong>a rerun must fill a gap, correct a bad row, or change nothing at all.</strong> Never duplicate, never delete, never move the finish line backwards.</p>
+  <p>Rerunning a pipeline should fill a gap, correct a bad row, or change nothing. Never duplicate, never delete, never move the finish line backwards. That is the whole property, and it is easy to state and easy to break in ways that leave the data looking completely normal.</p>
 
-  <p>That sounds like it should be the default and it is not. Below are the four ways the rule breaks in practice, the guard for each, and the one case that stays open. The examples come from scheduled scripts collecting market data, but every failure here belongs to any pipeline that runs on a timer against somebody else's system.</p>
+  <p>The standard patterns for getting it are well established: give every record a deterministic identifier derived from its content, upsert rather than append, or overwrite whole partitions instead of adding to them, and keep a watermark so the next run knows where to resume. I would use all of those, and I want to talk about what happens underneath them, because I broke this property four times while nominally following that advice.</p>
 
-  <h2>The design decision everything else follows from</h2>
+  <h2>Watermarks: data-derived or stored</h2>
 
-  <p>The second run is the hard one. It has to decide what it already has and what it still needs, and there are only two places to get that answer from: a separate progress store, or the data itself.</p>
+  <p>The second run is the hard one. It has to decide what it already has, and there are two places to get that from: a separate store of progress, or the data itself.</p>
 
-  <p>Reading it from the data — find the newest row, ask the source for everything after that — is the better default for small and medium pipelines. There is no progress file to drift out of step with reality, because reality <em>is</em> the file. An interrupted run needs no cleanup: the next one reads what landed and carries on.</p>
+  <p>Reading it from the data — find the newest row, ask for everything after that — is the better default for anything small enough not to need an orchestrator. There is no progress store to drift out of step with reality, because reality is the file. An interrupted run needs no cleanup; the next one reads what landed and carries on. Airflow's model of a run per data interval is the same idea with the bookkeeping made explicit, and if you are already running a scheduler you should use its version rather than inferring one.</p>
 
-  <p>The price of that choice is one sentence, and it explains three of the four failures below:</p>
+  <p>The cost of inferring it is a single sentence that explains three of the four failures below: every row you write is an instruction to the next run. Write a bad row and you have not only stored bad data, you have told the next run where to start. So the checkpoint has to be computed from validated rows, and "valid" has to be defined in code rather than assumed.</p>
 
-  <p><strong>Every row you write is an instruction to your future self.</strong> Write a bad row and you have not merely stored bad data, you have told the next run to start from the wrong place. Which means the checkpoint must be computed from <em>validated</em> rows, not from all rows — and "valid" has to be defined explicitly, per pipeline, in code.</p>
+  <h2>Empty rows as the resume point</h2>
 
-  <h2>Break 1: an empty row becomes the checkpoint</h2>
+  <p>Plenty of sources return a record all-or-nothing. Ask for a period that has not settled, or get quietly throttled, and you get a row with a date on it and no values in it. Write that like any other row and then take the newest date as your resume point, and the empty row is the newest date. The pipeline concludes it is up to date and never asks for the real periods behind it again.</p>
 
-  <p>Many sources return a record all-or-nothing. Ask for a period that has not settled yet, or get quietly throttled, and you receive a row carrying a date and no values at all. Write it like any other row, then do this:</p>
+  <pre><code># Before: any row can become the resume point, including one
+# that carries a date and no values at all.
+start = pd.read_csv(path)["Date"].max()
 
-  <pre><code># Where do we continue from? The newest date in the file.
-start = pd.read_csv(path)["Date"].max()</code></pre>
-
-  <p>An empty row dated today is the newest date in the file. The pipeline concludes it is up to date, and every real period behind that empty row is never requested again. The gap is permanent, and it is the gap-filling logic that made it permanent.</p>
-
-  <p><strong>The guard is one condition plus two policies.</strong> Continue from the newest row that actually carries a value:</p>
-
-  <pre><code># Continue only from rows that actually carry a closing price.
+# After: only rows that actually carry a value count.
 df = pd.read_csv(path)
 start = df[df["Close"].notna()]["Date"].max()</code></pre>
 
-  <p>Then: a response where every row is empty is a <em>failed fetch</em>, not data, so it never reaches the file. And a pass at startup deletes empty rows earlier runs already wrote, so old damage repairs itself rather than sitting there forever. Rows dated in the future get identical treatment — left alone, one of them convinces the pipeline it has data through 2027 and it stops fetching entirely.</p>
+  <p>Two policies follow from that one condition. A response where every row is empty is a failed fetch rather than data, so it never reaches the file at all. And a pass at startup deletes the empty rows earlier runs wrote, because otherwise the damage from before you knew about this sits there permanently. Rows dated in the future need identical treatment — one of those convinces the pipeline it has data through 2027 and it stops fetching entirely.</p>
 
-  <h2>Break 2: the storage location is derived from a network call</h2>
+  <p>This is the argument for a schema check at the boundary rather than trusting the source. <a href="https://pandera.readthedocs.io/" target="_blank" rel="noopener">pandera</a> will declare what a valid row looks like and reject the load; I hand-rolled the equivalent and would not do that again.</p>
 
-  <p>Per-item files named from a value looked up at runtime — a company name, a title, a slug — get a different name whenever that lookup degrades. Healthy source: the full name. Rate-limited: the bare identifier. Renamed upstream: a third answer.</p>
+  <h2>Storage paths derived from a network call</h2>
 
-  <p>Three answers means three files for one item. And because the pipeline works out what it has by reading the file, a new filename looks exactly like an item with no history, so it downloads the entire archive again into it. The end state is one item spread across three files, each holding a different partial copy, none complete.</p>
+  <p>I named per-item files using a label looked up at runtime. That lookup goes over the network and is rate-limited, so it returns the full name when the source is healthy, the bare identifier when it is not, and something else again when the label changes upstream.</p>
 
-  <p><strong>The guard:</strong> resolve the path from the stable identifier only. In practice that means looking for an existing file for that identifier and reusing whatever it is already called — the name is decided once and then remembered, never recalculated. Then add a startup pass that merges duplicates already on disk into one file, keeping the union of rows and preferring the copy with real values where two disagree.</p>
+  <p>Three answers meant three filenames for one item, and since the pipeline works out what it has by reading the file, a new filename looked exactly like an item with no history — so it downloaded the entire archive again into it. I ended up with items spread across three files, each holding a different partial copy of the same series.</p>
 
-  <p>Stated generally: <strong>anything you derive from a network call will eventually come back different.</strong> If that value decides where data is stored, one bad minute at the source permanently splits your dataset.</p>
+  <p>Paths are now resolved from the stable identifier only, by looking for an existing file for that identifier and reusing whatever it is already called. The general form: anything you derive from a network call will eventually come back different, and if that value decides where data is stored, one bad minute at the source splits your dataset permanently.</p>
 
-  <h2>Break 3: the duplicate check that creates duplicates</h2>
+  <h2>Deduplication by merge, and row inflation</h2>
 
-  <p>Rerunning deliberately re-reads a few periods you already have, because data arrives late and a run starting exactly where the last one stopped steps over it. So the pipeline constantly sees rows it already holds, and needs a reliable way to recognise them.</p>
+  <p>Reruns deliberately re-read a few periods, because records arrive late and a run that starts exactly where the last one stopped steps over them. So the pipeline constantly sees rows it already holds and needs to recognise them.</p>
 
-  <p>The usual approach is a key built from a few fields that together identify a row, discarding rows whose key you already hold. Implement that check as a <em>merge</em> — joining new rows against stored rows to see which match — and it works right up until the stored data itself contains duplicates. Then each new row matches several stored rows and you get one output row per match. The check meant to remove duplicates multiplies them.</p>
-
-  <p><strong>The guard: ask the simpler question.</strong> Build the set of keys already stored, keep only new rows whose key is not in it. This is an anti-join, and it cannot inflate anything because it never joins:</p>
+  <p>I implemented that as a merge — joining new rows against stored rows to see which matched. That works until the stored data itself contains duplicate keys, at which point each new row matches several stored rows and you get one output row per match. The check meant to remove duplicates was multiplying them, and it did that quietly.</p>
 
   <pre><code>def deduplicate(new_df, existing_df):
     new_keys = _composite_key(new_df, DEDUP_KEYS)
     existing_keys = set(_composite_key(existing_df, DEDUP_KEYS))
     return new_df[(~new_keys.isin(existing_keys)).values]</code></pre>
 
-  <p>Two things underneath it matter as much as the anti-join.</p>
+  <p>An anti-join cannot inflate anything because it never joins; it asks yes or no about each incoming row. If you would rather keep the merge, <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener">pandas</a> takes <code>validate="one_to_one"</code>, which raises on exactly this instead of performing it. I did not know that argument existed for an embarrassingly long time.</p>
 
-  <p><strong>The key must be built from fields that exist.</strong> Name three columns that are not in the response and every row gets the same empty key, which collapses entire days of records into one row with no error anywhere. Assert the columns exist before you build the key. If you would rather stay with <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener"><code>DataFrame.merge</code></a>, <code>validate="one_to_one"</code> raises on the inflation case instead of performing it quietly.</p>
+  <p>Two things underneath matter as much as the anti-join. The key has to be built from columns that exist — name three that do not and every row gets the same empty key, which collapses whole days of records into one row with no error anywhere. And the same record has to produce the same key every time, which it will not by default: the same quantity arrives as <code>629221</code> and <code>629221.0</code>, the same date as <code>15-Jan-2026</code> and <code>2026-01-15</code>. Canonicalise each field before building the key.</p>
 
-  <p><strong>The same row must always produce the same key.</strong> It will not, by default. The same quantity arrives as <code>629221</code> one time and <code>629221.0</code> the next; the same date as <code>15-Jan-2026</code> here and <code>2026-01-15</code> there. Compared as text those differ, so the same row is stored twice. Force every field into one canonical form before the key is built — dates to a single format, anything numeric to an actual number. If your store is a database rather than files, this is what <code>INSERT ... ON CONFLICT DO NOTHING</code> against a unique constraint gives you for free, and it is the better answer when it is available.</p>
+  <p>All of which is a hand-rolled version of what a database does with a unique constraint and <code>INSERT ... ON CONFLICT DO NOTHING</code>. If your target can be a database rather than a file, most of this section stops being your problem, and the reason my pipelines write CSVs is history rather than judgment.</p>
 
-  <h2>Break 4: going too fast, and writing the wreckage</h2>
+  <h2>Adaptive backoff as a data-quality control</h2>
 
-  <p>All of the above assumes the source keeps answering properly. Hit a rate limit and you often do not get a clean refusal — you get a partial or empty response, which is precisely how bad rows enter the file in the first place. <strong>Backing off is not politeness, it is a data-quality control.</strong></p>
+  <p>All of the above assumes the source keeps answering properly. Hit a rate limit and you often do not get a clean refusal — you get a partial or empty response, which is how bad rows get into the file in the first place. Backing off is a data quality control here, not politeness.</p>
 
-  <p>A fixed delay is the wrong instrument: too slow on a good day, too aggressive on a bad one. An adaptive pool finds the source's tolerance by itself. Start with five requests in flight, drop one whenever the source returns an error, add one back after fifteen consecutive successes. Individual requests get three attempts with a widening wait and a hard ten-second cut-off.</p>
+  <p>A fixed delay is the wrong instrument: too slow on a good day, too aggressive on a bad one. What I run instead starts with five requests in flight, drops one whenever the source returns an error, and adds one back after fifteen consecutive successes, so it finds the source's tolerance and re-finds it when that changes. Individual requests get three attempts with a widening wait and a hard ten-second timeout. Whether a given refusal is even worth retrying is <a href="/blog/http-429-retry-logic/">which refusals are worth retrying at all</a> that I got wrong for a while.</p>
 
-  <p>Which refusals are worth retrying at all is its own question, since a limit that clears in three seconds and a quota that is finished for the month arrive as the same status code — that is unpicked in <a href="/blog/http-429-retry-logic/">what a 429 really means</a>.</p>
+  <h2>Atomic writes: temp file and rename</h2>
 
-  <h2>The checklist</h2>
+  <p>This one is not from my own failures, and I include it because it is the thing I would have got wrong next. Writing a file in place is not a single operation. A crash partway leaves a truncated file, and the next run reads that as the complete dataset and carries on from it.</p>
 
-  <p>Everything above compresses into six things to put in a scheduled pipeline before you trust it:</p>
+  <p>The pattern is to write a temporary file in the same directory and <a href="https://lwn.net/Articles/457667/" target="_blank" rel="noopener">rename it over the original</a>, since rename is the one filesystem operation that either happens or does not. The LWN article on ext4 and data loss is the clearest explanation of why the obvious version is unsafe and where <code>fsync</code> belongs. In a warehouse the equivalent is writing to a staging table and swapping, or overwriting a whole partition rather than appending to it — the partition-overwrite pattern is the cleanest form of idempotency available and it is worth reaching for whenever the data is naturally partitioned by time.</p>
 
-  <ul>
-    <li><strong>Compute the checkpoint from validated rows only</strong>, and define "valid" explicitly.</li>
-    <li><strong>Treat an all-empty response as a failed fetch</strong>, never as data.</li>
-    <li><strong>Repair on startup</strong> — purge empty and future-dated rows, merge duplicate files. Old damage should heal, not accumulate.</li>
-    <li><strong>Overlap on purpose.</strong> Resume from a buffer behind the checkpoint, not from the checkpoint, so late-arriving records are picked up.</li>
-    <li><strong>Deduplicate with an anti-join on a normalised key</strong> whose columns you have asserted exist.</li>
-    <li><strong>Write atomically.</strong> Temporary file, then <a href="https://lwn.net/Articles/457667/" target="_blank" rel="noopener">rename over the original</a> — the one filesystem operation that either happens or does not. A crash mid-write otherwise leaves a truncated file that the next run reads as the complete dataset.</li>
-  </ul>
+  <h2>Source-side corrections: the unhandled case</h2>
 
-  <h2>The case this design cannot handle</h2>
+  <p>Everything above makes reruns recover from my mistakes. None of it helps when the source changes a value it already gave me.</p>
 
-  <p>All of it makes reruns recover from <em>your</em> mistakes. None of it helps when the source changes a value it already gave you.</p>
+  <p>If a record is corrected upstream, the duplicate check sees a key it already holds, concludes it has that record, and throws the correction away. Converging on a stable dataset and accepting corrections pull against each other, and using set membership picks one without ever deciding to. For prices it mostly works out because adjustments get recalculated anyway. For filings and anything compliance-adjacent it is a real hole.</p>
 
-  <p>If a record is corrected upstream, the duplicate check sees a key it already holds, decides it has that record, and throws the correction away. Converging on a stable dataset and accepting corrections pull in opposite directions, and using set membership picks one without ever really deciding to. For prices it mostly works out, since split adjustments get recalculated anyway; for filings and anything compliance-adjacent it is a genuine hole. The fix, when it matters, is to key on identity and store versions — the pattern a <a href="https://docs.getdbt.com/docs/build/snapshots" target="_blank" rel="noopener">dbt snapshot</a> implements — so a changed value becomes a new row rather than a discarded one.</p>
+  <p>The proper answer is to stop overwriting history and start versioning it: key on identity, and let a changed value become a new row with its own validity window. That is a slowly changing dimension, and <a href="https://docs.getdbt.com/docs/build/snapshots" target="_blank" rel="noopener">dbt snapshots</a> implement it if you are in a warehouse. I read about that after the fact, and it is what I would build if this dataset mattered to anyone but me.</p>
 
-  <p>The gap still open is telling "the source had nothing new" apart from "the source refused to answer", because both produce zero rows and look identical in the output. The likely fix for both problems is the same: re-download data you already have, on a schedule, and diff it against what you stored. The full accounting of what has broken across these pipelines, and the guards that came out of it, is in <a href="/blog/a-year-of-ingestion-bugs/">data ingestion bugs and how to catch them</a>.</p>
+  <p>The gap I still have not closed is telling "the source had nothing new" apart from "the source refused to answer", since both produce zero rows. The fix for that and for the corrections problem is probably the same thing — re-fetch data I already have on a schedule and diff it against what I stored — which is the next thing I want to build and which I expect will be unpleasant reading.</p>
 
   <h2>References and further reading</h2>
 
@@ -288,7 +274,7 @@ start = df[df["Close"].notna()]["Date"].max()</code></pre>
     <div class="post-grid post-grid--sm">
       <a class="post-card post-card--sm" href="/blog/how-to-test-a-data-pipeline/">
         <div class="post-card__media">
-          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
@@ -299,7 +285,7 @@ start = df[df["Close"].notna()]["Date"].max()</code></pre>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
         <div class="post-card__media">
-          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
@@ -310,7 +296,7 @@ start = df[df["Close"].notna()]["Date"].max()</code></pre>
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
         <div class="post-card__media">
-          <img src="/images/blog/scraping.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pagination.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>

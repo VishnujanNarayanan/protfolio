@@ -20,7 +20,7 @@
 <meta property="og:site_name" content="Vishnujan Narayanan">
 <meta property="og:locale" content="en_US">
 <meta property="og:url" content="https://vishnujan.dev/blog/how-i-scraped-nse-insider-filings/">
-<meta property="og:image" content="https://vishnujan.dev/images/blog/share-scraping.jpg">
+<meta property="og:image" content="https://vishnujan.dev/images/blog/share-pagination.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:type" content="image/jpeg">
@@ -28,7 +28,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="How to Scrape a Site That Paginates by Date">
 <meta name="twitter:description" content="180-day windows, a dedup key that silently deleted filings, and the indexing lag that forces a second source.">
-<meta name="twitter:image" content="https://vishnujan.dev/images/blog/share-scraping.jpg">
+<meta name="twitter:image" content="https://vishnujan.dev/images/blog/share-pagination.jpg">
 <!-- Roboto Flex is the nav reel's font (styles.css @font-face). Preloaded so it is in
      flight before the stylesheet finishes parsing and is ready for the FIRST paint —
      no fallback render to swap out, which is what made the header snap. crossorigin is
@@ -40,7 +40,7 @@
 <link rel="stylesheet" href="../../styles.css">
 <script>document.documentElement.classList.remove("no-js");</script>
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Home","item":"https://vishnujan.dev/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://vishnujan.dev/blog/"},{"@type":"ListItem","position":3,"name":"How to Scrape a Site That Paginates by Date","item":"https://vishnujan.dev/blog/how-i-scraped-nse-insider-filings/"}]}</script>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"How to Scrape a Site That Paginates by Date","description":"How to scrape a date-windowed endpoint: window sizing, resumable backfill, a dedup key that deleted rows, and sources that backfill late.","image":"https://vishnujan.dev/images/blog/share-scraping.jpg","datePublished":"2026-08-04","dateModified":"2026-08-04","author":{"@type":"Person","name":"Vishnujan Narayanan","url":"https://vishnujan.dev/"},"publisher":{"@type":"Person","name":"Vishnujan Narayanan"},"mainEntityOfPage":"https://vishnujan.dev/blog/how-i-scraped-nse-insider-filings/"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"How to Scrape a Site That Paginates by Date","description":"How to scrape a date-windowed endpoint: window sizing, resumable backfill, a dedup key that deleted rows, and sources that backfill late.","image":"https://vishnujan.dev/images/blog/share-pagination.jpg","datePublished":"2026-08-04","dateModified":"2026-08-04","author":{"@type":"Person","name":"Vishnujan Narayanan","url":"https://vishnujan.dev/"},"publisher":{"@type":"Person","name":"Vishnujan Narayanan"},"mainEntityOfPage":"https://vishnujan.dev/blog/how-i-scraped-nse-insider-filings/"}</script>
 </head>
 <body class="subpage-body post-body blog-body">
 <div class="mobile-nav__overlay"></div>
@@ -156,22 +156,18 @@
     <p class="post-head__dek">Find the undocumented window cap, resume from behind, and dedup on a key that cannot fail silently.</p>
   </div>
   <figure class="post-hero">
-    <img src="/images/blog/scraping.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
+    <img src="/images/blog/pagination.jpg" alt="" width="1000" height="1000" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>Public archives paginate by date constantly: give me a start date and an end date, and I will give you what falls between them. Regulatory filings, press releases, court records, transaction histories. Pulling twenty years out of one of those is a few hundred requests, a way to remember where you stopped, and — the part everyone underestimates — a way to notice when an answer came back short.</p>
+  <p>A lot of public archives use time-based pagination rather than page numbers: give me a start date and an end date, and I will give you what falls between them. Regulatory filings, press releases, court records, transaction histories. Pulling twenty years out of one is a few hundred requests, a way to remember where you stopped, and — the part that decides whether the result is any good — a way to notice when an answer came back short.</p>
 
-  <p>Because the defining property of these endpoints is that <strong>they will not tell you when they gave you less than you asked for.</strong> No error, no flag, no total count. A truncated response and a complete one are the same shape. Everything below follows from that.</p>
+  <p>Because these endpoints do not tell you when they gave you less than you asked for. No error, no truncation flag, no total count to check against. A short response and a complete one are the same shape, and every design decision below follows from that.</p>
 
-  <p>The worked example is a stock exchange's insider-trading disclosure endpoint — when a company director buys or sells shares in their own company they must tell the exchange, and those disclosures are public — going back twenty years into one file that stays current. The recipe is the same for any date-windowed source.</p>
+  <h2>Window sizing: finding the undocumented cap</h2>
 
-  <h2>Step 1: find the window size the hard way</h2>
+  <p>The obvious first attempt is one request covering the whole range. It fails in three ways depending on how wide you go, and only one of them is obvious. A very wide range times out, which is loud and easy to handle. A merely wide range returns quickly, with a valid response, containing some of the data.</p>
 
-  <p>The obvious first attempt is one request covering 2005 to today. It fails in three different ways depending on how wide you go, and only one of them is obvious.</p>
-
-  <p>A very wide range times out — loud, easy to notice, easy to handle. A merely wide range does something worse: it returns quickly, with a valid response, containing <em>some</em> of the data. If you are not comparing against something external, you cannot tell.</p>
-
-  <p>So do not retry harder. Never ask a question big enough to get truncated:</p>
+  <p>So the goal is never to ask a question big enough to get truncated.</p>
 
   <pre><code>DEFAULT_CHUNK_DAYS = 180   # max span fetched per request when looping a wide range
 
@@ -183,44 +179,42 @@ def fetch_range(session, from_date, to_date, chunk_days, retries=3):
         ...
         start = end + timedelta(days=1)</code></pre>
 
-  <p>180 days is not documented anywhere. The only way to find a cap nobody publishes is to <strong>walk into it deliberately while you can still tell you have hit it</strong>: pick a period you can verify independently, request it in progressively wider windows, and watch where the count stops growing. Then back off from that width. At 180 days, twenty years is about forty requests instead of thousands.</p>
+  <p>180 days is not documented anywhere. I found it by picking a period I could verify independently, requesting it at increasing widths, and watching where the count stopped growing, then backing off from that width. That is the only method I know of for a limit nobody publishes: walk into it deliberately, while you can still tell that you have. At 180 days, twenty years is about forty requests.</p>
 
-  <p>Two tells for a cap you have not found yet, both worth hard-coding as alarms: a response whose row count is a suspiciously round number (200, 500, 1000) is truncated until proven otherwise, and a <em>wider</em> window returning <em>fewer</em> rows than a narrower one means you crossed the limit.</p>
+  <p>Two tells are worth wiring in as alarms rather than rediscovering. A response whose row count lands on a suspiciously round number — 200, 500, 1000 — is truncated until proven otherwise. And a wider window returning fewer rows than a narrower one means you crossed a limit somewhere between them.</p>
 
-  <h2>Step 2: resume from behind where you stopped</h2>
+  <h2>Resumption: the lookback buffer</h2>
 
-  <p>The first run pulls the full history. Every run after that should start from the newest record already stored — but back up a buffer of days first, rather than resuming exactly where it stopped.</p>
+  <p>The first run pulls everything. Every run after that starts from the newest record stored, minus a buffer of days.</p>
 
-  <p>That buffer is not defensive padding. It is a correctness requirement, because records arrive late: a transaction from last Tuesday might be disclosed next Monday. Resume exactly where you stopped and you step straight over it, permanently, because you will never ask about that date again. Size the buffer from the source's own lateness, not from a round number that feels safe.</p>
+  <p>The buffer is there because records arrive late. A transaction from last Tuesday might be disclosed next Monday. Resume exactly where you stopped and you step over it permanently, since you will never ask about that date again. Size the buffer from the source's observed lateness rather than from a round number that feels safe.</p>
 
-  <p>Which means overlap is now normal, and every update re-reads records you already have. That makes the deduplication step load-bearing rather than a safety net — it runs on every single update, and when it is wrong the damage is immediate.</p>
+  <p>Which means overlap is now normal and every update re-reads records you already have, so the deduplication step is doing real work on every run rather than sitting there as a safety net. When it is wrong, the damage is immediate.</p>
 
-  <h2>Step 3: get the deduplication key right, because it fails silently</h2>
+  <p>The other half of resumption is knowing which windows you actually got, which I did not track for far too long. A run that dies partway, or a window that returned an error you retried past, leaves a hole that no amount of resuming from the newest record will ever fill — the watermark has moved beyond it. Logging every requested window with its outcome, then scanning that log for intervals you never successfully fetched, turns gap repair into a query rather than an archaeology exercise. It is three columns — window start, window end, outcome — and I would add it on day one now.</p>
 
-  <p>Deduplication works by building a key out of the fields that together identify a record, then discarding rows whose key you already hold. There are three ways to get this wrong and none of them raises.</p>
+  <h2>Deduplication keys: three silent failures</h2>
 
-  <p><strong>Naming columns that do not exist.</strong> A key written from memory rather than from an actual response:</p>
+  <p>Deduplication means building a key from the fields that identify a record and discarding rows whose key you already hold. All three of the ways I got this wrong were invisible from the outside.</p>
 
-  <pre><code># What was used. None of these are real column names.
+  <p>The first was naming columns that do not exist. I wrote the key from memory rather than from a response:</p>
+
+  <pre><code># What I used. None of these are real column names.
 DEDUP_KEYS = ['personName', 'acqQty', 'securityName']
 
 # What the endpoint actually returns.
 DEDUP_KEYS = ['symbol', 'intimDt', 'acqName', 'secAcq']</code></pre>
 
-  <p>With the first version every row produces the same empty key. To the deduplicator, every filing for a company on a given day is the same filing repeated — so it keeps one and drops the rest. A company that disclosed four separate transactions in a day is stored as one. Nothing raises, because building a key from a missing column is not by itself a crash, and the row count still looks plausible because it is never compared to anything. Assert the key columns exist against the first response you get; it is one line and it converts this into a startup failure.</p>
+  <p>Every row then produced the same empty key, so every filing for a company on a given day looked like one filing repeated, and the deduplicator kept one and dropped the rest. A company disclosing four transactions in a day was stored as one. Asserting that the key columns exist against the first response is one line and turns this into a startup failure.</p>
 
-  <p><strong>Implementing the check as a merge.</strong> Fixing the key above exposed a second bug underneath it: a merge against stored data that already contains duplicate keys does not remove duplicates, it multiplies them — each new row matches several stored rows and you get one output row per match. The pipeline went from silently deleting records to silently inventing them.</p>
-
-  <p>Use a set-membership test — an anti-join. Build the set of keys already stored, keep only the new rows whose key is not in it:</p>
+  <p>The second was implementing the check as a merge, which against stored data that already contains duplicate keys produces one output row per match and inflates rather than deduplicates. The pipeline went from silently deleting records to silently inventing them. An anti-join cannot do that:</p>
 
   <pre><code>def deduplicate(new_df, existing_df):
     new_keys = _composite_key(new_df, DEDUP_KEYS)
     existing_keys = set(_composite_key(existing_df, DEDUP_KEYS))
     return new_df[(~new_keys.isin(existing_keys)).values]</code></pre>
 
-  <p>It cannot inflate anything, because it never joins — it asks yes or no about each incoming row and nothing else. If you would rather stay with <a href="https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.merge.html" target="_blank" rel="noopener"><code>DataFrame.merge</code></a>, <code>validate="one_to_one"</code> makes it raise on exactly the inflation case instead of performing it quietly.</p>
-
-  <p><strong>Assuming a record arrives the same way twice.</strong> It does not. The same quantity comes back as <code>629221</code> from one place and <code>629221.0</code> from another; the same date as <code>15-Jan-2026</code> here and <code>2026-01-15</code> there. As text those are different values, so the same record gets a different key each time and is stored twice. Canonicalise every field before the key is built:</p>
+  <p>The third is that the same record does not arrive the same way twice. The same quantity comes back as <code>629221</code> from one place and <code>629221.0</code> from another, the same date as <code>15-Jan-2026</code> here and <code>2026-01-15</code> there. As text those are different keys, so the record is stored twice.</p>
 
   <pre><code>for k in dedup_keys:
     if k == 'intimDt':
@@ -233,37 +227,31 @@ DEDUP_KEYS = ['symbol', 'intimDt', 'acqName', 'secAcq']</code></pre>
     parts.append(col.fillna('').astype(str))
 return parts[0].str.cat(parts[1:], sep='|')</code></pre>
 
-  <p>This reads like housekeeping. It is what makes the next problem solvable at all.</p>
+  <p>That reads like housekeeping and it is what makes the next problem solvable. It is also all a hand-rolled version of a unique constraint plus <a href="https://www.postgresql.org/docs/current/sql-insert.html#SQL-ON-CONFLICT" target="_blank" rel="noopener">ON CONFLICT DO NOTHING</a>, which is what I would use if the destination were a database.</p>
 
-  <h2>Step 4: assume the archive is behind itself</h2>
+  <h2>Index lag: the archive behind itself</h2>
 
-  <p>Collecting history is the easy half. The harder problem is that an archive's searchable index usually lags its own publication — here, by roughly 30 to 60 days. For a twenty-year backfill that does not matter. For anything current it means <strong>the most recent two months of your dataset are permanently incomplete, and nothing in the response says so.</strong> The data looks finished because there is no marker for "still arriving".</p>
+  <p>Collecting history is the easy half. The harder problem is that an archive's searchable index usually lags its own publication — here by roughly 30 to 60 days. For a twenty-year backfill that does not matter at all. For anything current it means the most recent two months are permanently incomplete and nothing in the response says so, because there is no marker for "still arriving".</p>
 
-  <p>Test for this before you design around it: pick a record you know exists, and ask the endpoint for the window containing it, weekly, until it appears. The gap between its stated date and the date it became searchable is your lag.</p>
+  <p>Measuring the lag is worth doing before designing around it: take a record you know exists, ask the endpoint for the window containing it each week, and note the gap between its stated date and the date it became searchable.</p>
 
-  <p>The only real fix is a second source that publishes sooner. Supplement the recent window from it, map its fields onto the primary source's layout, and merge. That merge is only safe because of the canonicalisation in step 3 — without it, the same record from two sources produces two different keys and you end up with a dataset duplicated everywhere the sources overlap, which is worse than having one source.</p>
+  <p>The only real fix is a second source that publishes sooner, mapped onto the first source's field layout and merged. That merge is only safe because of the canonicalisation above — without it the same record from two sources produces two different keys, and you get a dataset duplicated everywhere the sources overlap, which is worse than having one source.</p>
 
-  <h2>Step 5: expect the second source to fight back</h2>
+  <h2>Blocks on the supplementary source</h2>
 
-  <p>Two blocks worth knowing about, because neither is obvious from the error.</p>
+  <p>Two blocks, neither obvious from the error. The first was HTTP 405 through Cloudflare, unaffected by any header I changed, because the block was fingerprinting the TLS handshake rather than reading headers. <a href="https://pypi.org/project/curl-cffi/" target="_blank" rel="noopener">curl_cffi</a> opens the connection the way Chrome does and gets past it, and <a href="/blog/why-scrapers-get-blocked/">the four layers a block can come from</a> are worth knowing before you spend a day on user agents like I did.</p>
 
-  <p><strong>HTTP 405 through Cloudflare, unaffected by header changes.</strong> Rotating the user agent did nothing because the block was not reading headers. It was fingerprinting the TLS handshake — how the encrypted connection is opened, which differs between a Python HTTP library and a real browser regardless of what the headers claim. <a href="https://pypi.org/project/curl-cffi/" target="_blank" rel="noopener">curl_cffi</a> opens the connection the way Chrome does and gets past it; the full stack of blocking layers is in <a href="/blog/why-scrapers-get-blocked/">why your scraper gets blocked</a>.</p>
+  <p>The more expensive half of that failure was the reporting. A fully blocked run finished successfully with zero new rows, which is exactly what a genuinely quiet day looks like. A pass and fail count at the end of the run is what stops those two ever looking the same again.</p>
 
-  <p>The more expensive part of that failure was the reporting: a fully blocked run finished successfully with zero new rows, which is exactly what a genuinely quiet day looks like. An explicit pass/fail summary at the end of the run is what stops "blocked" and "nothing new" from ever looking identical again.</p>
+  <p>The second was a 200-record cap per response with nothing in the response to indicate it. Fetching one day at a time keeps every window under the cap, at the cost of more requests. One address will also not survive a full historical crawl, so that source runs through a rotating pool.</p>
 
-  <p><strong>A 200-record cap per response, undocumented.</strong> Same silent shortfall as step 1, from a completely different system. Ask for a month over a busy period, get 200 records and no truncation flag. Fetching one day at a time solves it, because a single day almost never exceeds the cap. And one IP address will not survive a full historical crawl, so it runs through a rotating pool of proxies.</p>
+  <h2>Verification against an external total</h2>
 
-  <h2>What to check before you trust the output</h2>
+  <p>Every failure above has the same shape: the output was plausible, and nothing checked it against anything outside the pipeline.</p>
 
-  <p>Every failure above has the same shape: the output was plausible, and nothing checked it. Three defences, in the order they pay off.</p>
+  <p>Counting records for a handful of entities I could verify by hand, against the source's own published figures, would have caught the broken dedup key in a day rather than months. No amount of internal consistency would have, because the pipeline was perfectly consistent with itself. This is the check I would set up first on a new backfill, and it is a twenty-line script.</p>
 
-  <p><strong>Check totals against something outside the pipeline.</strong> Count records for a handful of entities you can verify by hand, and compare against the source's own published figures. That would have caught the broken dedup key in a day rather than months. No amount of internal consistency would have — the pipeline was perfectly consistent with itself.</p>
-
-  <p><strong>Treat "nothing new" as a claim that needs evidence.</strong> It is the correct answer often enough to be unremarkable and wrong often enough to be dangerous; it was the visible symptom of both the block and the row cap. Anything that can legitimately return nothing must be able to say whether it looked and found nothing, or never got to look.</p>
-
-  <p><strong>Decide what happens when a record is corrected.</strong> If an entity amends a past disclosure, the key sees a record it already holds and drops the amendment. That is a side effect of set membership, not a decision, and for a compliance-adjacent dataset it is the gap that matters most.</p>
-
-  <p>The pipelines these examples come from are private market-data collectors; what transfers is the recipe. The wider list of what breaks in scheduled ingestion is in <a href="/blog/a-year-of-ingestion-bugs/">data ingestion bugs and how to catch them</a>, and the guards that make repeat runs safe are in <a href="/blog/building-resumable-etl-pipelines/">how to make an ETL pipeline safe to rerun</a>.</p>
+  <p>"Nothing new" needs to be treated as a claim requiring evidence — it was the visible symptom of both the block and the row cap. And it is worth deciding explicitly what happens when a record is amended after publication, because the anti-join sees a key it already holds and drops the correction. That is a side effect of set membership rather than a decision, and for a filings dataset it is the gap that bothers me most. Versioning the record instead of overwriting it, the way a <a href="https://docs.getdbt.com/docs/build/snapshots" target="_blank" rel="noopener">dbt snapshot</a> does, is the answer I would reach for now.</p>
 
   <h2>References and further reading</h2>
 
@@ -304,7 +292,7 @@ return parts[0].str.cat(parts[1:], sep='|')</code></pre>
     <div class="post-grid post-grid--sm">
       <a class="post-card post-card--sm" href="/blog/how-to-test-a-data-pipeline/">
         <div class="post-card__media">
-          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Testing</span><span class="tag">Data engineering</span></div>
@@ -315,7 +303,7 @@ return parts[0].str.cat(parts[1:], sep='|')</code></pre>
       </a>
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
         <div class="post-card__media">
-          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
@@ -326,7 +314,7 @@ return parts[0].str.cat(parts[1:], sep='|')</code></pre>
       </a>
       <a class="post-card post-card--sm" href="/blog/local-llm-vs-api/">
         <div class="post-card__media">
-          <img src="/images/blog/local-llm.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/local-llm.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">LLMs</span><span class="tag">Infrastructure</span></div>

@@ -156,96 +156,62 @@
     <p class="post-head__dek">A green suite is evidence about your code, not your data. The cheap tests that catch what it misses.</p>
   </div>
   <figure class="post-hero">
-    <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="563" fetchpriority="high" decoding="async">
+    <img src="/images/blog/pipeline-tests.jpg" alt="" width="1000" height="1000" fetchpriority="high" decoding="async">
   </figure>
 
-  <p>A data pipeline can have a green test suite and be completely broken in production, and this is normal rather than unlucky. The tests check that each function does what its author intended. Almost every way a scheduled pipeline dies is somewhere else: in the seam between two components, in the difference between a developer's machine and a clean one, in a third party changing something, or in a configuration value nobody reads.</p>
+  <p>Yuan et al. went through 198 randomly sampled failures in Cassandra, HBase, HDFS, MapReduce and Redis, and found that <a href="https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-yuan.pdf" target="_blank" rel="noopener">92% of the catastrophic ones came from incorrect handling of errors that were not themselves fatal</a>. In a quarter of those, the handler simply ignored the error. The bug was in the code that ran after something had already gone wrong.</p>
 
-  <p>What follows is the set of cheap tests that do catch those, in the order worth adding them, with a real failure behind each one. None of it needs infrastructure — no staging cluster, no data quality platform. Most of it is a single extra run of something you already have.</p>
+  <p>That result has stuck with me because it describes almost every pipeline failure I have had to debug. The extraction worked. The load worked. Something in between failed, got caught, got logged, and the run carried on and reported success. A test suite covering all three stages passes the whole time.</p>
 
-  <h2>The four failures a unit test cannot see</h2>
+  <p>Most guides on testing data pipelines cover four things: unit tests, contract tests, data quality checks and end-to-end runs. Those are the right four and I will go through them. But I have found that the failures which actually reach production live in a different set, and I have never seen those written up: sources that will not repeat themselves, runs that die halfway, and third parties that change under you. Those take up the second half.</p>
 
-  <p>These come from one scheduled pipeline: it collects job advertisements, scores each one against a stored profile, and sends the good ones to a chat app with a tailored resume attached. Fetch, filter, score, notify — the same four stages as most collection pipelines. It had 92 unit tests, every external service mocked, and continuous integration on every push. All four failures below were live for weeks. None of them was visible from the suite.</p>
+  <h2>Standard test types: unit, contract, data quality, end-to-end</h2>
 
-  <h3>1. The error was caught, logged, and the run reported success</h3>
+  <p><strong>Unit tests</strong> check that a function does what its author intended, given inputs the author imagined. They are cheap and you should have them. They also cannot see a seam: two functions that are each correct, wired together wrongly, pass every unit test either of them has.</p>
 
-  <p>The function that sends a message read a threshold value to quote in the text:</p>
+  <p><strong>Contract tests</strong> are the ones most pipeline codebases skip, and I skipped them for a long time because I misunderstood what they were for. The idea, from <a href="https://docs.pact.io/" target="_blank" rel="noopener">Pact</a> and consumer-driven contract testing generally, is that you record what you expect a dependency to send and what you expect to send it, and both sides check themselves against that recording. In a web service you own both sides. Against a third-party API you own neither, so a contract test degrades into an assertion that the response you saved months ago still parses. That still catches a surprising amount, but it is worth being honest that it is a weaker thing than the pattern's usual sales pitch.</p>
 
-  <pre><code>threshold = settings.selection.apply_threshold</code></pre>
+  <p><strong>Data quality tests</strong> assert on the rows rather than the code: row counts within a range, no nulls in key columns, values from a known set, freshness. This is the best-tooled part of the whole subject — <a href="https://docs.getdbt.com/docs/build/data-tests" target="_blank" rel="noopener">dbt tests</a> if you are in a warehouse, <a href="https://greatexpectations.io/expectations/" target="_blank" rel="noopener">Great Expectations</a> or <a href="https://www.soda.io/" target="_blank" rel="noopener">Soda</a> if you are not, and <a href="https://pandera.readthedocs.io/" target="_blank" rel="noopener">pandera</a> if you just want a dataframe schema that refuses the bad row. The lightest useful version is four assertions: uniqueness on the key, not-null on what matters, accepted values on the enums, and a freshness check.</p>
 
-  <p>That setting lives under <code>scoring:</code> in the config file, not <code>selection:</code>. The config reader raises on a missing key deliberately, so typos fail loudly instead of silently returning nothing. It did fail loudly — into this, one level up in the orchestrator:</p>
+  <p><strong>End-to-end tests</strong> run the whole thing and compare the output against what you expected. They assume the pipeline is deterministic, which is where I stopped being able to follow along.</p>
 
-  <pre><code>except Exception as exc:
-    log.error("notification_error", job_id=job.job_id, error=str(exc))</code></pre>
+  <p>Each of the four is worth having. What they share is that they all check the code against a world you have described in advance, and pipelines break because the world stops matching the description.</p>
 
-  <p>Both decisions are right on their own. A config typo should raise. A failed notification should not roll back database writes that already committed. Together they convert a hard error into a line in a log file, and the run continues and finishes green.</p>
+  <h2>Failures a green suite misses</h2>
 
-  <p>What hid it completely was that a <em>different</em> function sends the end-of-run summary, and that one does not touch the mistyped setting. So summaries kept arriving on schedule and the channel looked alive. What never arrived was the per-match message — the entire product.</p>
+  <p>Four that cost me weeks, and the thing they have in common.</p>
 
-  <p>This is the single most common shape of pipeline breakage: <strong>an exception handler that logs and continues, around the step that is the point of the run.</strong> The generalisation is not "catch fewer exceptions". It is that a run's exit status has to be computed from what it produced, not from whether it reached the end. Count the things you meant to do and the things you did, and fail the run when those disagree.</p>
+  <p>The first is the Yuan paper's finding at one-person scale. A configuration key was misspelled, so a lookup raised, exactly as the config reader was designed to. One level up, the orchestrator caught the exception, logged it, and continued — also by design, because a failure to send a notification should not roll back database writes that already committed. Both decisions are defensible on their own. Between them they converted a hard error into a log line, and the run finished green. What kept it invisible for weeks was that a second, unrelated function sent the run summary, so the summary arrived on schedule while the actual output never did.</p>
 
-  <h3>2. The suite had been red on the server for a month</h3>
+  <p>I now think an exit status computed from "did we reach the end" is close to worthless. Count what you intended to produce and what you produced, and fail the run when those disagree.</p>
 
-  <p>Exactly one test was failing, on every push, going back five weeks:</p>
-
-  <pre><code>FAILED tests/test_smoke.py::test_repo_layout
-AssertionError: Missing scaffold paths:
-    CHANGELOG.md  PRD.md  job_automation_architecture.md</code></pre>
-
-  <p>Those documents had been made local-only and removed from version control. The test still asserted they exist. They do exist on the developer machine, so it passed there every time; a fresh checkout has never had them, so it failed on the server every time. And a suite that is always red is a suite nobody reads, which is how the first failure survived.</p>
-
-  <p>The fix was not to delete the assertion but to write the property that was actually meant:</p>
-
-  <pre><code>def test_operator_docs_are_not_tracked_by_git() -> None:
-    tracked = subprocess.run(
-        ["git", "ls-files", "--", *operator_docs], capture_output=True, text=True
-    ).stdout.split()
-    assert not tracked</code></pre>
-
-  <p>That version means the same thing in a fresh checkout as on a developer machine. The original depended on the environment, so it was not a check at all — it was a description of one laptop.</p>
-
-  <p>The technique is smaller than the lesson and worth stealing today: <strong>run your suite inside a fresh clone of your own repository.</strong> It reproduces exactly what CI sees and it costs ten seconds.</p>
+  <p>The second is a test that had been failing on CI for five weeks while passing locally. It asserted that some files existed; those files had been removed from version control and still sat on my disk. The suite was red on every push, which meant nobody read it, which is how the first failure survived. The fix was to assert the property actually meant — that those paths are not tracked by git — but the habit worth stealing is smaller: run your suite inside a fresh clone of your own repository before you trust it.</p>
 
   <pre><code>rm -rf /tmp/cicheck &amp;&amp; git clone -q . /tmp/cicheck
 cd /tmp/cicheck &amp;&amp; pytest -q</code></pre>
 
-  <p>The same class of problem — a test that quietly depends on the machine it runs on — is why <a href="https://testcontainers.com/" target="_blank" rel="noopener">Testcontainers</a> exists. If a test needs a database, starting a real one in a container beats asserting that the one on your laptop happens to be configured correctly.</p>
+  <p>Ten seconds, and it reproduces exactly what CI sees. The same class of problem — a test that quietly depends on the machine — is what <a href="https://testcontainers.com/" target="_blank" rel="noopener">Testcontainers</a> exists to remove for anything needing a real database.</p>
 
-  <h3>3. The vendor retired the model underneath it</h3>
+  <p>The third was a hosted model being retired underneath a running job. No code changed; the vendor withdrew it for projects not already using it, and every call started returning 404. No test suite catches this, because every test of that path mocks the vendor. One detail from that day is worth carrying: the provider's own "list available models" endpoint still returned the model while every generation request was failing. Listing is not proof of callability.</p>
 
-  <p>A live run died on a call to a hosted language model:</p>
+  <p>The fourth is my favourite, because the code was correct. A chat platform rejects an entire message if any one of its buttons carries a URL it cannot reach. One unset base-URL setting meant a run that had done all of its work correctly discarded the only output it exists to produce. When you assemble a result from several optional parts, a bad part should cost you that part rather than the whole — filter to the buttons that work and send what survives. The same shape shows up in a row with one unparseable column and a digest with one dead feed.</p>
 
-  <pre><code>404 This model models/gemini-2.5-flash is no longer available to new users.</code></pre>
+  <p>None of those four is a bug in a transformation. They are a swallowed exception, an environment difference, a third party moving, and a config value. I would guess that is the general distribution, though I have not counted carefully enough to defend a number.</p>
 
-  <p>No code had changed. The provider withdrew the model for projects not already using it. No test suite catches this, because every test of that code path mocks the vendor — which is correct practice, and also means those tests assert precisely nothing about whether the vendor still answers.</p>
+  <h2>Non-deterministic sources: measuring the noise floor</h2>
 
-  <p>Two things help. If you want the mocks to at least stay faithful to what the vendor really sent, <a href="https://vcrpy.readthedocs.io/en/latest/" target="_blank" rel="noopener">VCR.py</a> records real responses once and replays them, so the fixture is a transcript rather than something you invented. And for the live check, one detail is worth knowing: the provider's own "list available models" call still returned that model at the moment every generation request was returning 404. <strong>Listing is not proof of callability.</strong> A startup check that lists models passes while the pipeline is dead. A startup check that makes one tiny real call does not.</p>
+  <p>Here is where the standard advice runs out. Comparing a run against a stored expected output assumes that running the same query twice gives you the same answer. Against a live API it often does not, and if you do not know your source's variance you cannot interpret any comparison you make.</p>
 
-  <h3>4. One bad optional part discarded the whole output</h3>
-
-  <p>A run scored a genuine match, selected it, rendered the document, and reported nothing:</p>
-
-  <pre><code>notification_error: Inline keyboard button url
-'.../resume/....pdf' is invalid: wrong http url</code></pre>
-
-  <p>The chat platform rejects the <em>entire</em> message if any single button URL is unreachable from the internet. A base-URL setting still held its shipped placeholder. One unset value threw away the only output the pipeline exists to produce.</p>
-
-  <p>The guard that generalises is not "validate that setting". It is: <strong>when you assemble a result out of several optional parts, a bad part should cost you that part, not the whole.</strong> Filter the buttons to the ones with a usable URL and send the message with whatever survives. The same rule applies to a row with one unparseable column, an export with one unavailable section, a digest with one dead feed.</p>
-
-  <h2>Before you compare anything, measure the noise floor</h2>
-
-  <p>This is the test that has to come first, and it is the one most often skipped. It comes from a different pipeline — a collector that pulls news headlines for a set of crypto assets — and it applies to any pipeline whose source is a live service.</p>
-
-  <p>The question was whether running the collector with several workers in parallel corrupted results. So a parallel run was compared against a single-worker baseline:</p>
+  <p>I found this out while trying to answer what looked like a simple question: does running a collector with more workers in parallel corrupt the results? The obvious test is to compare a parallel run against a single-worker baseline.</p>
 
   <pre><code>workers   4   →  77.9s   IDENTICAL     ← baseline
 workers  12   →  40.5s   IDENTICAL
 workers  20   →  26.0s   DIFF -34/+36
 workers  32   →  25.9s   DIFF -38/+40</code></pre>
 
-  <p>The obvious reading is that concurrency is safe up to twelve workers. That inference does not hold, and the shape of the differences is what gives it away: 34 articles missing and 36 extra. A concurrency bug <em>loses</em> writes. It does not politely swap one article for another. Symmetric substitution looks like the source returning a different result set.</p>
+  <p>Read casually, that says concurrency is safe up to twelve workers. It does not, and the shape of the differences is the tell: 34 records missing and 36 extra. A concurrency bug loses writes. It does not swap one record for another. Symmetric substitution looks like the source returning a different result set.</p>
 
-  <p>So the next step removed concurrency from the question entirely: run the collector sequentially, twice, over the same range.</p>
+  <p>So I took concurrency out of the question and ran the collector sequentially, twice, over the same range.</p>
 
   <pre><code>SEQUENTIAL vs SEQUENTIAL   (12 assets, 26 weekly slices each)
 asset     runA   runB  missing  extra
@@ -254,56 +220,58 @@ ETH        494    487       17     10
 ...
 TOTAL     4390   4387       55     52     →  2.44% churn, no concurrency involved</code></pre>
 
-  <p>Every asset differed. The source returns a different set of results for the same query minutes apart, at a rate of about 2.44%. The parallel runs above had diverged from baseline by 1.7% to 2.6% — <em>less</em> than two sequential runs differ from each other. Concurrency was exonerated, and the two "identical" verdicts were luck rather than proof.</p>
+  <p>Every asset differed. The source returns a different set of results for the same query minutes apart, at about 2.44%. The parallel runs had diverged from baseline by 1.7% to 2.6% — less than two sequential runs differ from each other. Concurrency was exonerated and the two "identical" verdicts were luck.</p>
 
-  <p>The rule: <strong>before asserting that a change preserves correctness, measure how much the system varies when you change nothing.</strong> Without that number, "identical to baseline" carries no information and neither does "slightly different". It costs one extra run, and it decides whether any of your other comparisons mean anything at all. It also tells you what your assertions are allowed to be — which is the next section.</p>
+  <p>Measure how much your system varies when you change nothing, before you compare anything to a baseline. It costs one extra run. Without that number, "identical to baseline" and "slightly different" both carry no information.</p>
 
-  <h2>What to assert when exact equality is off the table</h2>
+  <p>Once you have the number, the question becomes what to assert instead of equality, and the answer has a name I did not know at the time. <a href="https://www.hillelwayne.com/post/metamorphic-testing/" target="_blank" rel="noopener">Metamorphic testing</a> is asserting a relationship between two runs when you cannot state the correct output for either one: the same query with a wider date window must return a superset; sorting by a different field must return the same set; deduplicating twice must equal deduplicating once. Those hold regardless of what the source did today. Reading about it after the fact reorganised how I think about this more than anything else on the subject.</p>
 
-  <p>Once you know the source will not repeat itself, tests that compare output to a stored file are dead. What replaces them are properties that can still fail deterministically. Two groups cover most of it.</p>
+  <p>The tooling to make the comparison itself cheap is worth knowing about too. <a href="https://github.com/datafold/data-diff" target="_blank" rel="noopener">data-diff</a> compares two tables across databases and reports the rows that differ rather than a boolean, which is the difference between "the run changed something" and "the run changed these 55 rows".</p>
 
-  <p><strong>Unit tests for the parts that are pure logic.</strong> Ranking is deterministic and descending. Excluded categories stay excluded. The text-repair step is idempotent — running it twice changes nothing the second time. The output directory contains only expected files. Properties like "idempotent" and "always sorted" are where <a href="https://hypothesis.readthedocs.io/en/latest/" target="_blank" rel="noopener">Hypothesis</a> earns its keep: it generates the inputs, including the empty and duplicate-heavy ones nobody writes by hand.</p>
+  <h2>Resumability: kill-and-restart tests</h2>
 
-  <p><strong>Scenario tests that kill a run and check the next one repairs it.</strong> This is the property a scheduled pipeline actually rests on, and it is fully testable offline against a fake source. Each test kills a run a different way: budget exhausted mid-run, interrupt mid-item, a wall of 503s, process death with no cleanup, a partial run resumed with a different worker count, an item entering the universe late, an item dropping out. The assertions are about the dataset afterwards — no duplicate identifiers, no null timestamps, no malformed progress rows, existing files byte-identical where nothing should have changed.</p>
+  <p>A scheduled pipeline rests on something narrower than a run succeeding: that the next run fixes whatever the last one left behind. That property is fully testable offline against a fake source, and it is cheap to write.</p>
 
-  <p>In the collector above that came to 52 tests, thirty of the first kind and twenty-two of the second, all offline against a synthetic feed. One assertion in the second group does more work than the rest, and it is not obvious why until you try to break it:</p>
+  <p>The scenarios are the ways a run dies: budget exhausted mid-run, interrupted with a <code>KeyboardInterrupt</code>, killed with no cleanup, a wall of 503s, resumed with a different worker count, an item entering the set late, an item dropping out. Each test kills a run one of those ways and asserts on the dataset afterwards — no duplicate identifiers, no null timestamps, no malformed progress rows, files byte-identical where nothing should have changed.</p>
+
+  <p>One assertion in that group does more work than the others, and it took me an embarrassing while to see why it was needed:</p>
 
   <pre><code>expected_max = (len(fresh) * SLICES
                 + sum(SLICES - n for n in partial_done.values())
                 + len(complete) * 3)
 assert f.requests_made &lt;= expected_max, f"refetched too much: {f.requests_made}"</code></pre>
 
-  <p>The test kills a run partway and checks the next one finishes. But a collector with no resume logic at all would also finish — by fetching everything again. Bounding the number of requests is what makes the test about resumption rather than about completion. <strong>Assert on the work done, not only on the end state.</strong> The same trick catches an "incremental" load that quietly rebuilds the table, and a cache that never hits.</p>
+  <p>The test kills a run partway and checks the next one finishes. But a collector with no resume logic at all would also finish, by fetching everything again. Bounding the request count is what makes the test about resumption rather than about completion. The same trick catches an incremental load that quietly rebuilds the whole table, and a cache that never hits.</p>
 
-  <h2>Say what the suite still cannot see</h2>
+  <p>This is <a href="https://principlesofchaos.org/" target="_blank" rel="noopener">chaos engineering</a> at the scale of one script, minus the infrastructure. For generating the inputs rather than the failures, <a href="https://hypothesis.readthedocs.io/en/latest/" target="_blank" rel="noopener">Hypothesis</a> is where properties like "idempotent" and "always sorted" get properly exercised, including the empty and duplicate-heavy cases nobody writes by hand.</p>
 
-  <p>A suite's gaps are part of what it means, and writing them down is what stops the green tick being read as a guarantee. For the one above: the feed is mocked, so real malformed XML, truncated responses and genuine connection resets are untested. Retry paths are exercised through a mock returning an error string, never a real timeout. The mock returns one article per slice, so nothing tests behaviour at the source's result cap — and a wider request window silently returning fewer articles is exactly the failure that cap produces. The 2.44% noise figure was measured once, on one range, from one address, and is then treated as a constant.</p>
+  <h2>Third-party drift: retired models and schema changes</h2>
 
-  <p>None of those are reasons not to ship. They are the list of things that only an end-to-end run against the real dependencies can tell you, which is why that run belongs in the schedule.</p>
+  <p>The retired model above is one instance of a category: your code is fine and the world moved. Schema drift is the same category — a column renamed upstream, a type widened, a field that starts arriving null.</p>
 
-  <h2>What to set up on a new pipeline, in order</h2>
+  <p>Three things help, in increasing order of effort. <a href="https://vcrpy.readthedocs.io/en/latest/" target="_blank" rel="noopener">VCR.py</a> records real responses once and replays them, so your fixtures are transcripts rather than something you invented — which at least keeps the mocks faithful to what the vendor really sent on the day you recorded. A single real call at startup, against the actual dependency with throwaway data, catches the retired model, the placeholder URL and the mistyped config key in one go; this is the highest-value thing on the entire page and it belongs in the schedule rather than in the test suite. And where you control the producer, a <a href="https://docs.confluent.io/platform/current/schema-registry/index.html" target="_blank" rel="noopener">schema registry</a> enforces compatibility before the bad message is ever published, which is the version of this problem solved properly rather than defensively.</p>
 
-  <p><strong>1. Make "nothing happened" distinguishable from "nothing was allowed to happen."</strong> Zero new rows is both the normal outcome and the failure outcome, and that ambiguity is the single most common way breakage hides. An explicit attempted/succeeded/failed count at the end of every run costs nothing and turns silence into a signal.</p>
+  <p>Where you do not control the producer — which is most scraping and most third-party APIs — I have not found anything better than validating the response against a declared schema and failing the load rather than writing the row. <a href="https://mlsys.org/Conferences/2019/doc/2019/167.pdf" target="_blank" rel="noopener">Google's data validation paper</a> describes generating that schema from the data itself and treating a mismatch as an alert rather than a crash, which is more sophisticated than anything I run, and is the direction I would go if this were a bigger system.</p>
 
-  <p><strong>2. One end-to-end run against the real dependencies with throwaway data</strong>, in the schedule rather than in the test suite. It is the only thing that would have caught the retired model, the placeholder URL and the mistyped config key — all three in a single run.</p>
+  <h2>A testing checklist for a new pipeline</h2>
 
-  <p><strong>3. Assert on the output, not on the calls.</strong> A test that verifies a function was invoked with certain arguments passes happily while the message it produced is rejected by the platform.</p>
+  <p>Roughly in order of value per hour spent.</p>
 
-  <p><strong>4. Measure the noise floor before comparing anything to a baseline.</strong> One extra unchanged run, and every later comparison becomes interpretable.</p>
+  <p>Make "nothing happened" distinguishable from "nothing was allowed to happen". Zero new rows is both the normal outcome and the failure outcome, and that ambiguity is how breakage hides longest. An attempted/succeeded/failed count at the end of every run costs nothing.</p>
 
-  <p><strong>5. Kill the run in every way it can die, and assert the next run repairs it.</strong> This is <a href="https://principlesofchaos.org/" target="_blank" rel="noopener">chaos engineering</a> at the scale of one script, and it needs no infrastructure: a <code>KeyboardInterrupt</code>, a killed process, a wall of 503s and an exhausted budget cover most of it.</p>
+  <p>One end-to-end run against real dependencies with throwaway data, in the schedule rather than in CI. Then the four data quality assertions — uniqueness, not-null, accepted values, freshness — because they catch the silent corruption that unit tests structurally cannot.</p>
 
-  <p><strong>6. Run the suite in a fresh clone before trusting it.</strong> Ten seconds, and it is the difference between a check and a description of your own machine.</p>
+  <p>Measure the noise floor before comparing anything to a baseline, and when the source is non-deterministic, assert metamorphic relations instead of equality. Kill the run in every way it can die and check the next one repairs it, bounding the work so the test is about resumption.</p>
 
-  <p><strong>7. Add assertions to the data itself, not only to the code.</strong> Row counts within a range, no nulls in the key columns, values inside a known set, freshness. This is the part with mature tooling — <a href="https://greatexpectations.io/expectations/" target="_blank" rel="noopener">Great Expectations</a>, <a href="https://docs.getdbt.com/docs/build/data-tests" target="_blank" rel="noopener">dbt tests</a> and <a href="https://pandera.readthedocs.io/" target="_blank" rel="noopener">pandera</a> all do it — and the cheapest of them is a schema declaration that refuses the bad row instead of writing it.</p>
+  <p>Then the cheap ones: assert on output rather than on calls, since a test verifying a function was invoked with certain arguments passes happily while the message it produced is rejected downstream. Run the suite in a fresh clone. And log enough that when something does slip through, the run tells you which of these it was.</p>
 
-  <p>The failures above came from two of my own scheduled pipelines, one of which is public; the code for both the suite and the rewritten smoke test is linked below. A green suite is evidence about the code, not about the product — and the tests that see the difference are, all of them, an hour's work.</p>
+  <p>The thing I have not done, and probably should, is measure how long each failure was live before I noticed. The loud ones are easy — they were fixed within hours, because they announced themselves. For the quiet ones I genuinely do not know, and nothing in my setup records when a bug started, only when I fixed it.</p>
 
   <h2>References and further reading</h2>
 
-  <p>Hillel Wayne's <a href="https://www.hillelwayne.com/post/metamorphic-testing/" target="_blank" rel="noopener">metamorphic testing</a> is the formal name for what the scenario tests above are doing: asserting a relationship between two runs when you cannot state the correct answer for either one, which is exactly the situation a non-deterministic source puts you in.</p>
+  <p>Hillel Wayne's <a href="https://www.hillelwayne.com/post/metamorphic-testing/" target="_blank" rel="noopener">metamorphic testing</a> is the piece to read in full on the technique named above: asserting a relationship between two runs when you cannot state the correct answer for either one, which is exactly the situation a non-deterministic source puts you in.</p>
 
-  <p>The OSDI paper <a href="https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-yuan.pdf" target="_blank" rel="noopener">Simple Testing Can Prevent Most Critical Failures</a> is the one to read if you only read one. Its finding — that most catastrophic failures in distributed systems come from error-handling code that was never exercised — describes failure 1 above exactly: the handler ran, caught, logged, and continued.</p>
+  <p>The OSDI paper <a href="https://www.usenix.org/system/files/conference/osdi14/osdi14-paper-yuan.pdf" target="_blank" rel="noopener">Simple Testing Can Prevent Most Critical Failures</a> is the one to read if you only read one. Its finding — that most catastrophic failures in distributed systems come from error-handling code that was never exercised — describes the first failure above exactly: the handler ran, caught, logged, and continued.</p>
 
   <h3>Testing data, not just code</h3>
 
@@ -321,6 +289,10 @@ assert f.requests_made &lt;= expected_max, f"refetched too much: {f.requests_mad
     <li><a href="https://hypothesis.readthedocs.io/en/latest/" target="_blank" rel="noopener">Hypothesis</a> — property-based testing. State the property, let it find the input that breaks it.</li>
     <li><a href="https://vcrpy.readthedocs.io/en/latest/" target="_blank" rel="noopener">VCR.py</a> — record real HTTP responses once, replay them forever. Fixtures that came from the real source rather than from your imagination.</li>
     <li><a href="https://testcontainers.com/" target="_blank" rel="noopener">Testcontainers</a> — a real Postgres or Redis per test run, which removes a whole class of "passes on my machine" failures.</li>
+    <li><a href="https://docs.pact.io/" target="_blank" rel="noopener">Pact</a> — consumer-driven contract testing. Strongest when you own both sides; against a third-party API it degrades into "the response I saved still parses", which is still worth having.</li>
+    <li><a href="https://github.com/datafold/data-diff" target="_blank" rel="noopener">data-diff</a> — compares two tables across databases and tells you which rows differ, rather than whether they differ.</li>
+    <li><a href="https://www.soda.io/" target="_blank" rel="noopener">Soda</a> — data quality checks as a small YAML file, for pipelines that are not in a dbt warehouse.</li>
+    <li><a href="https://docs.confluent.io/platform/current/schema-registry/index.html" target="_blank" rel="noopener">Confluent Schema Registry</a> — compatibility enforced before a bad message is published. The upstream fix for schema drift, where you control the producer.</li>
     <li><a href="https://docs.pytest.org/en/stable/" target="_blank" rel="noopener">pytest</a> — specifically fixtures and <code>tmp_path</code>, which is what makes kill-and-resume scenarios cheap to write in the first place.</li>
     <li><a href="https://principlesofchaos.org/" target="_blank" rel="noopener">Principles of chaos engineering</a> — the discipline the scenario tests borrow from, minus the infrastructure.</li>
   </ul>
@@ -336,7 +308,7 @@ assert f.requests_made &lt;= expected_max, f"refetched too much: {f.requests_mad
   <h3>My own projects</h3>
 
   <ul>
-    <li><a href="https://github.com/VishnujanNarayanan/Job_Application_Bot" target="_blank" rel="noopener">Job_Application_Bot</a> — source for the examples here, including the test suite and the rewritten smoke test.</li>
+    <li><a href="https://github.com/VishnujanNarayanan/Job_Application_Bot" target="_blank" rel="noopener">Job_Application_Bot</a> — a scheduled pipeline of mine, if you want the suite, the fresh-clone smoke test and the run accounting in full.</li>
   </ul>
 </article>
 
@@ -346,7 +318,7 @@ assert f.requests_made &lt;= expected_max, f"refetched too much: {f.requests_mad
     <div class="post-grid post-grid--sm">
       <a class="post-card post-card--sm" href="/blog/a-year-of-ingestion-bugs/">
         <div class="post-card__media">
-          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/ingestion-bugs.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Data engineering</span><span class="tag">Reliability</span></div>
@@ -357,7 +329,7 @@ assert f.requests_made &lt;= expected_max, f"refetched too much: {f.requests_mad
       </a>
       <a class="post-card post-card--sm" href="/blog/how-i-scraped-nse-insider-filings/">
         <div class="post-card__media">
-          <img src="/images/blog/scraping.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/pagination.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">Web scraping</span><span class="tag">Data engineering</span></div>
@@ -368,7 +340,7 @@ assert f.requests_made &lt;= expected_max, f"refetched too much: {f.requests_mad
       </a>
       <a class="post-card post-card--sm" href="/blog/local-llm-vs-api/">
         <div class="post-card__media">
-          <img src="/images/blog/local-llm.jpg" alt="" width="1000" height="563" loading="lazy" decoding="async">
+          <img src="/images/blog/local-llm.jpg" alt="" width="1000" height="1000" loading="lazy" decoding="async">
         </div>
         <div class="post-card__body">
           <div class="tag-row"><span class="tag">LLMs</span><span class="tag">Infrastructure</span></div>
