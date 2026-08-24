@@ -1,6 +1,6 @@
-  <p>My best configuration was right 61.4% of the time on data it had never seen, against a market that went up in 46.8% of minutes. That is roughly fifteen points of edge and it is worth nothing, for reasons that took me four checks to establish.</p>
+  <p>My best configuration was right 61.4% of the time on data it had never seen, against a market that went up in 46.8% of minutes. Roughly fifteen points of edge, on a model that only opens its mouth for 70 minutes out of 3,100. Whether that is a real edge or a well-dressed coin flip took four checks to work out, and the answer is not the one the headline number suggests.</p>
 
-  <p>The reason this is worth writing down is that a model can pass every test a tutorial teaches — held-out data, no lookahead in the features, a confusion matrix — and still be measuring nothing. The leak that killed mine was not in the features. It was in my process, and it does not show up as a train/validation gap, which is the only kind of overfitting most write-ups discuss.</p>
+  <p>The reason this is worth writing down is that a model can pass every test a tutorial teaches — held-out data, no lookahead in the features, a confusion matrix — and still be measuring nothing. The leak in mine was not in the features. It was in my process, and it does not show up as a train/validation gap, which is the only kind of overfitting most write-ups discuss.</p>
 
   <p>The setup, briefly, so the numbers mean something: 9.4 million exchange records for 31 large companies, aggregated to one-minute bars, predicting whether the price is higher one minute later.</p>
 
@@ -52,17 +52,19 @@ Confusion Matrix:
 Predicted 1 count: 70
 Actual 1 count: 1451</code></pre>
 
-  <p>Seventy decisions out of 3,100 minutes. Forty-three right, twenty-seven wrong. With no skill you would expect about 33 right out of 70, so 43 is high, and with numbers this small that is roughly what coin flips give you when they fall your way. A binomial interval on 43/70 runs from about 49% to 73%, which contains the base rate, so the result is consistent with no skill whatsoever.</p>
+  <p>Seventy decisions out of 3,100 minutes. Forty-three right, twenty-seven wrong. With no skill you would expect about 33 right out of 70, so 43 is high, and with numbers this small that is roughly what coin flips give you when they fall your way. A binomial interval on 43/70 runs from about 49% to 73%. That contains the 46.8% base rate, so the data cannot rule out no skill at all — and it also reaches well past 61%, so it cannot rule out a real edge. Seventy decisions simply do not decide it.</p>
 
-  <p>The other direction of the matrix is worse. There were 1,451 minutes where the price rose and the model stayed silent for 1,408 of them, catching about 3% of what it was looking for. It is not a model that predicts the market 61% of the time. It declines to answer 97.7% of the time and has an edge indistinguishable from luck on the remainder.</p>
+  <p>The other direction of the matrix looks alarming and mostly is not. There were 1,451 minutes where the price rose and the model stayed silent for 1,408 of them, catching about 3% of what it was looking for. Low recall is not by itself a defect: a model that declines to answer 97.7% of the time and is right when it does speak is a perfectly reasonable design, and passing on an opportunity costs you nothing but the opportunity. The problem is not that it is selective. It is that 70 decisions cannot tell you whether the selection works.</p>
 
-  <p>Report the number of decisions alongside the rate, always, and treat any precision figure built on fewer than a few hundred as a hypothesis.</p>
+  <p>Report the number of decisions alongside the rate, always, and treat any precision figure built on fewer than a few hundred as a hypothesis worth testing rather than a result.</p>
 
   <h2>Check 3: survival after costs</h2>
 
   <p>A percentage invites more tuning. Money does not. Simulating the strategy — fixed position size, every signal at the 0.6 setting, 327 trades — came out flat before costs and clearly negative once realistic brokerage and transaction taxes are applied to 327 round trips.</p>
 
-  <p>That is the check that ends the argument, and it generalises past finance: convert the metric into the unit the decision is actually made in. Cost per false positive, hours of review per alert, money per round trip. An edge smaller than the friction is not an edge, and an accuracy figure will never tell you that on its own.</p>
+  <p>That is the 0.6 configuration, not the 61.4% one, and the distinction matters. The 0.63 setting fires a fifth as often, so it pays a fifth of the costs, and I have not run its profit and loss separately. What I can say is that a hit rate does not settle it either way, because direction says nothing about magnitude: 43 wins and 27 losses is profitable only if the average win is at least the size of the average loss, and on one-minute moves that is an assumption, not a result. Until that simulation exists, 61.4% is a hit rate and not a return.</p>
+
+  <p>That is the check worth running before any other, and it generalises past finance: convert the metric into the unit the decision is actually made in. Cost per false positive, hours of review per alert, money per round trip. An edge smaller than the friction is not an edge, and an accuracy figure will never tell you that on its own.</p>
 
   <h2>An evaluation checklist</h2>
 
@@ -72,7 +74,7 @@ Actual 1 count: 1451</code></pre>
 
   <p>And match the test period to how often the model acts. If a setting fires 70 times across the whole window, the window is too short to judge it — either get more data or restrict yourself to settings that produce enough decisions to measure.</p>
 
-  <p>The pipeline underneath a negative result is still worth keeping. Minute bars, a resumable backfill and a feature set are reusable whatever the model concludes, and <a href="/blog/building-resumable-etl-pipelines/">making the collection safe to rerun</a> turned out to be the part with lasting value.</p>
+  <p>The pipeline underneath an inconclusive result is still worth keeping. Minute bars, a resumable backfill and a feature set are reusable whatever the model concludes, and <a href="/blog/building-resumable-etl-pipelines/">making the collection safe to rerun</a> turned out to be the part with lasting value.</p>
 
   <h2>References and further reading</h2>
 
