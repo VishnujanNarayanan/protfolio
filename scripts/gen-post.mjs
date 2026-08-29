@@ -140,9 +140,9 @@ function head(p) {
 <meta property="article:author" content="https://www.linkedin.com/in/vishnujan-narayanan">
 <meta property="article:published_time" content="${p.published}">
 <meta property="article:modified_time" content="${p.published}">
-<link rel="icon" href="../../favicon.ico?v=2" sizes="any">
-<link rel="icon" type="image/png" href="../../favicon-512.png?v=2" sizes="512x512">
-<link rel="apple-touch-icon" href="../../apple-touch-icon.png?v=2">
+<link rel="icon" href="../../favicon.ico?v=3" sizes="any">
+<link rel="icon" type="image/png" href="../../favicon-512.png?v=3" sizes="512x512">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png?v=3">
 <link rel="canonical" href="${u}">
 <meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:title" content="${esc(p.title)}">
