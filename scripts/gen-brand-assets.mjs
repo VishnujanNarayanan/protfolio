@@ -4,6 +4,7 @@
  *
  * Outputs (all committed, all referenced by the pages):
  *   images/logo-mark.png   the logo trimmed, outer white flood-filled to alpha
+ *   images/logo-mark-96.png  small copy of it for on-page UI (the mobile nav)
  *   og-logo.jpg            1200x630 share card — the mark on a white rounded
  *                          plate over the footer's blue contour field
  *   favicon-512.png        512x512, mark on white (search results, PWA)
@@ -63,4 +64,7 @@ icon(512, "favicon-512.png");
 icon(180, "apple-touch-icon.png");
 magick("favicon-512.png", "-define", "icon:auto-resize=48,32,16", "favicon.ico");
 
-console.log("wrote images/logo-mark.png og-logo.jpg favicon-512.png apple-touch-icon.png favicon.ico");
+// 4. UI copy of the mark: the mobile nav shows it ~32px tall, so ship a small
+//    transparent PNG rather than the 80KB full-size one.
+magick(MARK, "-resize", "x96", "-strip", "-colors", "64", "+dither", "images/logo-mark-96.png");
+console.log("wrote images/logo-mark.png images/logo-mark-96.png og-logo.jpg favicon-512.png apple-touch-icon.png favicon.ico");
